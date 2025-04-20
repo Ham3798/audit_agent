@@ -1,0 +1,14 @@
+langgraph
+langchain-core # LangGraph는 종종 LangChain 핵심 구성 요소에 의존합니다.
+GitPython # GitHub 리포지토리 클론용
+
+# --- 테스트 --- #
+pytest
+
+# --- 외부 도구 필요 (pip 설치 아님) ---
+# slither-analyzer (Solidity 정적 분석)
+# mythril (EVM 바이트코드 분석)
+
+# --- 기타 분석 도구 (필요시 추가) ---
+# 예: bandit (Python 보안 분석), safety (Python 의존성 검사)
+# pylint, flake8 등 
