@@ -7,6 +7,7 @@ from typing import Annotated, List, TypedDict, Union
 
 from langgraph.graph import StateGraph, END
 from git import Repo
+from crytic_compile import CryticCompile
 
 # 1. 확장된 감사 상태 정의
 class AuditState(TypedDict):
@@ -14,27 +15,7 @@ class AuditState(TypedDict):
     github_url: str          # 감사 대상 GitHub URL
     local_repo_path: str | None = None # 클론된 로컬 리포지토리 경로
     repo_analysis: dict | None = None  # 리포지토리 구조 분석 결과 (컨트랙트, 프레임워크 등)
-    threat_model: dict | None = None # Threat Modeling 결과
-    static_analysis_findings: List[str] = [] # 일반 정적 분석 결과
-    slither_findings: List[str] = []       # Slither 분석 결과
-    dependency_findings: List[str] = []    # 의존성 검사 결과
-    mythril_findings: List[str] = []       # Mythril 분석 결과
-    report: str | None = None              # 최종 보고서 내용
-    feedback: str | None = None            # 피드백 내용
     error: str | None = None               # 프로세스 중 발생한 오류
-
-# --- Helper Function --- 
-def _run_command(command: list[str], cwd: str) -> tuple[bool, str]:
-    """주어진 디렉토리에서 명령어를 실행하고 결과를 반환합니다."""
-    try:
-        process = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
-        return True, process.stdout
-    except FileNotFoundError:
-        return False, f"Error: Command '{command[0]}' not found. Is it installed and in PATH?"
-    except subprocess.CalledProcessError as e:
-        return False, f"Error running command {' '.join(command)}:\n{e.stderr}"
-    except Exception as e:
-        return False, f"An unexpected error occurred: {e}"
 
 # 2. 워크플로우 노드 함수 정의
 def clone_repository(state: AuditState) -> dict:
@@ -66,289 +47,162 @@ def clone_repository(state: AuditState) -> dict:
             return {"local_repo_path": None, "error": f"Failed to clone repository: {e}"}
 
 def analyze_repo_structure(state: AuditState) -> dict:
-    """클론된 리포지토리 구조를 분석하여 컨트랙트 파일과 프레임워크를 식별합니다."""
-    print("--- 리포지토리 구조 분석 시작 ---")
+    """프로젝트 빌드 후 crytic-compile 라이브러리로 구조 및 컴파일 정보를 분석합니다."""
+    print("--- 리포지토리 구조 분석 시작 (Build + crytic-compile library) ---")
     repo_path = state.get("local_repo_path")
     if not repo_path or not os.path.isdir(repo_path):
         return {"error": "Repository path not valid or not found."}
 
-    contracts = []
+    analysis_result = {}
     framework = "unknown"
-
+    analysis_errors = [] # 오류 기록용 리스트 추가
+    
     try:
+        # 1. 프레임워크 식별
+        print("  > 프레임워크 식별 중...")
         for root, _, files in os.walk(repo_path):
-            # 특정 디렉토리 제외 (예: node_modules, .git, lib)
-            if any(part in root for part in ["node_modules", ".git", "lib", "test", "script"]):
-                continue
+             if any(f"/{part}/" in root or root.endswith(f"/{part}") for part in [".git", "node_modules", "lib", "cache", "out"]):
+                 continue
+             for file in files:
+                 if file == "hardhat.config.js" or file == "hardhat.config.ts": framework = "hardhat"
+                 elif file == "foundry.toml": framework = "foundry"
+             if framework != "unknown": break
+        print(f"  > 프레임워크 식별됨: {framework}")
 
-            for file in files:
-                if file.endswith(".sol"):
-                    # repo_path 기준으로 상대 경로 저장
-                    relative_path = os.path.relpath(os.path.join(root, file), repo_path)
-                    contracts.append(relative_path)
-                elif file == "hardhat.config.js" or file == "hardhat.config.ts":
-                    framework = "hardhat"
-                elif file == "foundry.toml":
-                    framework = "foundry"
+        # 2. 네이티브 빌드 명령어 실행 (프레임워크 기반)
+        build_command = None
+        if framework == 'foundry':
+            build_command = ["forge", "build"]
+        elif framework == 'hardhat':
+             # npx가 PATH에 있어야 함
+             build_command = ["npx", "hardhat", "compile"]
+        
+        build_successful = False
+        if build_command:
+            print(f"  > 네이티브 빌드 실행: {' '.join(build_command)}...")
+            try:
+                # 빌드 명령어 실행 (실시간 출력 위해 capture_output 제거)
+                # result = subprocess.run(build_command, cwd=repo_path, capture_output=True, text=True, check=False, encoding='utf-8')
+                result = subprocess.run(build_command, cwd=repo_path, check=False) # stderr/stdout이 터미널에 직접 표시됨
+                
+                if result.returncode != 0:
+                    # stderr가 캡처되지 않으므로 에러 메시지에서 제거
+                    err_msg = f"'{ ' '.join(build_command) }' 실행 오류 (코드: {result.returncode}). 터미널 출력을 확인하세요."
+                    print(f"  ! {err_msg}")
+                    analysis_errors.append(err_msg)
+                else:
+                    print(f"\n  > '{ ' '.join(build_command) }' 실행 성공.") # 가독성을 위해 줄바꿈 추가
+                    build_successful = True
+            except FileNotFoundError:
+                err_msg = f"'{build_command[0]}' 명령을 찾을 수 없습니다. 설치되어 있고 PATH에 있는지 확인하세요."
+                print(f"  ! {err_msg}")
+                analysis_errors.append(err_msg)
+            except Exception as e:
+                err_msg = f"'{ ' '.join(build_command) }' 실행 중 예외 발생: {e}"
+                print(f"  ! {err_msg}")
+                analysis_errors.append(err_msg)
+        else:
+            print("  > 프레임워크가 unknown이거나 특정 빌드 명령어가 없어 빌드를 건너니다.")
+            # 빌드 과정이 없어도 crytic-compile은 시도해볼 수 있음
+            build_successful = True 
 
-        analysis_result = {
-            "contracts": sorted(contracts),
-            "framework": framework,
-            "dependencies": "(Not implemented yet)" # 의존성 분석은 추후 구현
-        }
-        print(f"분석 완료: {len(contracts)}개의 Solidity 파일 발견, 프레임워크: {framework}")
-        return {"repo_analysis": analysis_result, "error": None}
+        # 3. CryticCompile 실행 (빌드 성공 시)
+        if build_successful:
+            print(f"  > CryticCompile 초기화 (프레임워크: {framework})...")
+            compile_kwargs = {}
+            if framework != 'unknown':
+                compile_kwargs['compile_force_framework'] = framework
+            
+            crytic_compile = CryticCompile(repo_path, **compile_kwargs)
+            print("  > CryticCompile 분석 완료.")
+
+            # 4. 분석 결과 추출
+            contracts_summary = []
+            compiler_versions = set()
+            for unit_name, compilation_unit in crytic_compile.compilation_units.items():
+                if hasattr(compilation_unit, 'compiler_version') and compilation_unit.compiler_version:
+                     compiler_version_obj = compilation_unit.compiler_version
+                     if hasattr(compiler_version_obj, 'version'):
+                          compiler_versions.add(compiler_version_obj.version)
+                     else:
+                          compiler_versions.add(str(compiler_version_obj))
+                
+                if hasattr(compilation_unit, 'contracts') and compilation_unit.contracts:
+                    for contract_object in compilation_unit.contracts:
+                        if hasattr(contract_object, 'name'):
+                            contract_name = contract_object.name
+                            relative_path = os.path.relpath(unit_name, repo_path) if os.path.isabs(unit_name) else unit_name
+                            contracts_summary.append({
+                                "name": contract_name, 
+                                "source_path": relative_path 
+                            })
+            
+            artifacts_path = None
+            if framework == 'foundry':
+                artifacts_path = os.path.join(repo_path, 'out')
+            elif framework == 'hardhat':
+                 artifacts_path = os.path.join(repo_path, 'artifacts')
+            potential_cache_path = os.path.join(repo_path, 'crytic-compile-cache')
+            if artifacts_path is None and os.path.isdir(potential_cache_path):
+                 artifacts_path = potential_cache_path
+            
+            analysis_result = {
+                "contracts": sorted(contracts_summary, key=lambda x: x['source_path']),
+                "framework": framework,
+                "compiler_versions": sorted(list(compiler_versions)),
+                "artifacts_path": artifacts_path
+            }
+            print(f"분석 완료: {len(contracts_summary)}개의 컨트랙트 발견, 프레임워크: {framework}")
+            print(f"  > 사용된 컴파일러 버전: {analysis_result['compiler_versions']}")
+            print(f"  > 아티팩트 경로 (추정): {artifacts_path}")
+        else:
+             print("  > 빌드 실패로 CryticCompile 분석을 건너니다.")
+             # 빌드 실패 시 analysis_result는 비어있음
+
+        # 최종 상태 반환 (오류 포함 가능)
+        return {"repo_analysis": analysis_result, "error": "; ".join(analysis_errors) if analysis_errors else None}
 
     except Exception as e:
-        print(f"리포지토리 분석 중 오류 발생: {e}")
-        return {"repo_analysis": None, "error": f"Failed to analyze repository structure: {e}"}
-
-def threat_modeling(state: AuditState) -> dict:
-    """Threat Modeling을 수행합니다 (Placeholder)."""
-    print("--- Threat Modeling 수행 (Placeholder) ---")
-    if not state.get("local_repo_path"):
-        return {"error": "Repository not cloned."}
-    # 여기에 실제 Threat Modeling 로직 추가
-    # 예: LLM 호출, 아키텍처 분석, STRIDE 적용 등
-    threat_model_result = {"identified_threats": ["Placeholder Threat 1", "Placeholder Threat 2"]}
-    print(f"Threat Modeling 결과 (예시): {threat_model_result}")
-    return {"threat_model": threat_model_result}
-
-def run_static_analysis(state: AuditState) -> dict:
-    """일반 정적 코드 분석을 수행합니다 (Placeholder)."""
-    print("--- 일반 정적 분석 실행 (Placeholder) ---")
-    repo_path = state.get("local_repo_path")
-    if not repo_path:
-        return {"error": "Repository not cloned."}
-    
-    # 여기에 실제 정적 분석 도구(예: bandit, pylint) 연동 코드 추가
-    # 예시: bandit 실행 (Python 프로젝트 가정)
-    # success, output = _run_command(["bandit", "-r", "."], cwd=repo_path)
-    # findings = state.get("static_analysis_findings", [])
-    # if success:
-    #     findings.append("Bandit Analysis:\n" + output)
-    # else:
-    #     findings.append("Bandit Analysis Failed:\n" + output)
-    
-    findings = state.get("static_analysis_findings", []) # 임시 결과
-    findings.append("일반 정적 분석 결과: 잠재적 보안 취약점 발견 (예시)")
-    print(f"현재까지 발견된 사항 (정적 분석): {len(findings)}개")
-    return {"static_analysis_findings": findings}
-
-def run_slither(state: AuditState) -> dict:
-    """Slither를 사용하여 Solidity 코드를 분석합니다 (Placeholder)."""
-    print("--- Slither 분석 실행 (Placeholder) ---")
-    repo_path = state.get("local_repo_path")
-    if not repo_path:
-        return {"error": "Repository not cloned."}
-    
-    # Solidity 파일 존재 여부 확인 로직 추가 가능
-    # 여기에 실제 Slither 실행 및 결과 파싱 코드 추가
-    # 예시: slither 실행
-    # success, output = _run_command(["slither", "."], cwd=repo_path)
-    # findings = state.get("slither_findings", [])
-    # if success:
-    #     findings.append("Slither Analysis:\n" + output)
-    # else:
-    #     findings.append("Slither Analysis Failed:\n" + output)
-
-    findings = state.get("slither_findings", []) # 임시 결과
-    findings.append("Slither 분석 결과: Reentrancy 취약점 가능성 (예시)")
-    print(f"현재까지 발견된 사항 (Slither): {len(findings)}개")
-    return {"slither_findings": findings}
-
-def check_dependencies(state: AuditState) -> dict:
-    """프로젝트 의존성을 검사합니다 (Placeholder)."""
-    print("--- 의존성 검사 실행 (Placeholder) ---")
-    repo_path = state.get("local_repo_path")
-    if not repo_path:
-        return {"error": "Repository not cloned."}
-    
-    # 여기에 실제 의존성 검사 도구(예: safety, pip-audit) 연동 코드 추가
-    # 예시: safety 실행 (requirements.txt 또는 pyproject.toml 필요)
-    # success, output = _run_command(["safety", "check", "-r", "requirements.txt"], cwd=repo_path)
-    # findings = state.get("dependency_findings", [])
-    # if success:
-    #     findings.append("Dependency Check (safety):\n" + output)
-    # else:
-    #     findings.append("Dependency Check (safety) Failed:\n" + output)
-
-    findings = state.get("dependency_findings", []) # 임시 결과
-    findings.append("의존성 검사 결과: 알려진 취약점이 있는 패키지 사용 (예시)")
-    print(f"현재까지 발견된 사항 (의존성): {len(findings)}개")
-    return {"dependency_findings": findings}
-
-def run_mythril(state: AuditState) -> dict:
-    """Mythril을 사용하여 EVM 바이트코드를 분석합니다 (Placeholder)."""
-    print("--- Mythril 분석 실행 (Placeholder) ---")
-    repo_path = state.get("local_repo_path")
-    if not repo_path:
-        return {"error": "Repository not cloned."}
-    
-    # 분석 대상 바이트코드 식별 로직 필요
-    # 여기에 실제 Mythril 실행 및 결과 파싱 코드 추가
-    # 예시: myth analyze <contract_address or bytecode>
-    # success, output = _run_command(["myth", "analyze", "<target>"], cwd=repo_path) # <target> 수정 필요
-    # findings = state.get("mythril_findings", [])
-    # if success:
-    #     findings.append("Mythril Analysis:\n" + output)
-    # else:
-    #     findings.append("Mythril Analysis Failed:\n" + output)
-
-    findings = state.get("mythril_findings", []) # 임시 결과
-    findings.append("Mythril 분석 결과: 특정 함수에서 Integer Overflow 가능성 (예시)")
-    print(f"현재까지 발견된 사항 (Mythril): {len(findings)}개")
-    return {"mythril_findings": findings}
-
-def compile_report(state: AuditState) -> dict:
-    """모든 분석 결과를 종합하여 최종 감사 보고서를 생성합니다."""
-    print("--- 감사 보고서 생성 ---")
-    if state.get("error"): # 중간에 에러 발생 시
-        report_content = f"감사 실패: {state['error']}"
-        print(report_content)
-        return {"report": report_content}
-
-    all_findings = {
-        "Threat Modeling": state.get("threat_model", {}),
-        "Static Analysis": state.get("static_analysis_findings", []),
-        "Slither Analysis": state.get("slither_findings", []),
-        "Dependency Check": state.get("dependency_findings", []),
-        "Mythril Analysis": state.get("mythril_findings", []),
-    }
-
-    report_lines = [f"감사 대상: {state['github_url']}", "="*30]
-
-    has_findings = False
-    for category, findings in all_findings.items():
-        if findings:
-            report_lines.append(f"\n[{category} 결과]")
-            if isinstance(findings, list):
-                if findings:
-                    has_findings = True
-                    for i, finding in enumerate(findings):
-                        report_lines.append(f"- {finding}")
-                else:
-                     report_lines.append("- 발견된 사항 없음")
-            elif isinstance(findings, dict):
-                 has_findings = True
-                 import json
-                 report_lines.append(json.dumps(findings, indent=2, ensure_ascii=False))
-            else:
-                 report_lines.append(str(findings))
-    
-    if not has_findings:
-        report_lines.append("\n축하합니다! 모든 분석 단계에서 특별한 문제가 발견되지 않았습니다.")
-
-    final_report = "\n".join(report_lines)
-    print(final_report)
-    print("-" * 20)
-    return {"report": final_report}
-
-def cleanup(state: AuditState) -> dict:
-    """임시 파일 등을 정리합니다. './audit_repo'는 삭제하지 않습니다."""
-    print("--- 정리 작업 시작 (./audit_repo 제외) --- ")
-    repo_path = state.get("local_repo_path") # 상태에는 여전히 경로가 있을 수 있음
-
-    # './audit_repo'는 사용자가 관리하도록 남겨둡니다.
-    if repo_path == "./audit_repo":
-        print(f"감사 리포지토리 디렉토리 '{repo_path}'는 삭제하지 않습니다.")
-    elif repo_path and os.path.exists(repo_path):
-        # 만약 다른 임시 경로가 사용되었다면 삭제 시도 (이전 버전 호환 등)
-        print(f"경고: 예상치 못한 경로 '{repo_path}'가 상태에 있습니다. 삭제를 시도합니다.")
-        try:
-            shutil.rmtree(repo_path)
-            print(f"임시 디렉토리 '{repo_path}'가 삭제되었습니다.")
-        except Exception as e:
-            print(f"임시 디렉토리 삭제 중 오류 발생: {e}")
-    else:
-        print("정리할 추가 임시 디렉토리가 없습니다.")
-
-    # 다른 정리 작업이 필요하면 여기에 추가 (예: 생성된 로그 파일 삭제 등)
-
-    return {} # 상태 변경 없음
-
-def handle_feedback(state: AuditState) -> dict:
-    """피드백을 처리하거나 다음 단계를 결정합니다 (Placeholder)."""
-    print("--- 피드백 처리 (Placeholder) ---")
-    final_report = state.get("report")
-    # 여기에 피드백 입력 요청, LLM을 이용한 보고서 개선,
-    # 또는 특정 분석 재실행 등의 로직 추가 가능
-    print("감사 보고서가 생성되었습니다. 필요한 경우 피드백을 기록하고 추가 조치를 취할 수 있습니다.")
-    # 예시: 사용자 입력 대기 또는 자동 종료
-    user_feedback = input("피드백을 입력하시겠습니까? (y/N): ")
-    if user_feedback.lower() == 'y':
-        feedback_text = input("피드백 내용: ")
-        return {"feedback": feedback_text} # 피드백 상태 저장
-    return {}
+        # 전체 분석 프로세스 중 예외 발생
+        err_msg = f"리포지토리 분석 중 치명적 오류 발생: {e}"
+        print(f"  ! {err_msg}")
+        # 기존 오류에 추가
+        analysis_errors.append(err_msg)
+        return {"repo_analysis": None, "error": "; ".join(analysis_errors)}
 
 # --- 조건부 엣지 로직 --- #
-def should_continue_after_clone(state: AuditState) -> str: # 함수 이름 변경
-    """오류 발생 여부 또는 클론 성공 여부에 따라 다음 단계를 결정합니다."""
+def should_continue_after_clone(state: AuditState) -> str:
+    """클론 성공 여부에 따라 다음 단계를 결정합니다."""
     if state.get("error"):
         print(f"오류 발생으로 프로세스 중단: {state['error']}")
-        return "cleanup" # 오류 발생 시 정리 후 종료
+        return END # 오류 발생 시 바로 종료
     if not state.get("local_repo_path"):
          print("리포지토리 클론 실패로 프로세스 중단")
-         return END
-    return "analyze_repo" # 수정: 클론 성공 시 리포 분석으로 이동
-
-def should_continue_after_analysis(state: AuditState) -> str:
-    """리포지토리 분석 후 오류 여부에 따라 다음 단계를 결정합니다."""
-    if state.get("error"): # analyze_repo_structure 에서 에러 발생 시
-        print(f"리포지토리 분석 오류로 프로세스 중단: {state['error']}")
-        # 분석 실패 시에도 정리는 필요할 수 있음
-        return "cleanup"
-    # 분석 성공 시 Threat Modeling 으로 진행
-    return "threat_modeling"
+         return END # 클론 실패 시 바로 종료
+    return "analyze_repo" # 성공 시 analyze_repo로 이동
 
 # 3. 그래프 정의 및 노드/엣지 추가
 workflow = StateGraph(AuditState)
 
 # 노드 추가
 workflow.add_node("clone", clone_repository)
-workflow.add_node("analyze_repo", analyze_repo_structure) # 새 노드 추가
-workflow.add_node("threat_modeling", threat_modeling)
-workflow.add_node("static_analysis", run_static_analysis)
-workflow.add_node("slither", run_slither) # Solidity 분석
-workflow.add_node("dependency_check", check_dependencies)
-workflow.add_node("mythril", run_mythril) # EVM 분석
-workflow.add_node("compile_report", compile_report)
-workflow.add_node("handle_feedback", handle_feedback)
-workflow.add_node("cleanup", cleanup)
+workflow.add_node("analyze_repo", analyze_repo_structure)
 
-# 엣지 추가 (워크플로우 정의)
+# 엣지 추가 (단순화된 워크플로우)
 workflow.set_entry_point("clone")
 
-# 조건부 시작: 클론 성공 시 -> 리포 분석
+# 클론 후 -> 분석 또는 종료
 workflow.add_conditional_edges(
     "clone",
-    should_continue_after_clone, # 변경된 조건 함수 사용
+    should_continue_after_clone,
     {
-        "analyze_repo": "analyze_repo", # 변경: 성공 시 analyze_repo로
-        "cleanup": "cleanup",
-        END: END
+        "analyze_repo": "analyze_repo", # 성공 시 analyze_repo
+        END: END                     # 실패 시 END
     }
 )
 
-# 리포 분석 후 -> Threat Modeling (또는 에러 시 cleanup)
-workflow.add_conditional_edges(
-    "analyze_repo",
-    should_continue_after_analysis,
-    {
-        "threat_modeling": "threat_modeling", # 성공 시 Threat Modeling
-        "cleanup": "cleanup"               # 실패 시 Cleanup
-    }
-)
-
-# Threat Modeling 이후 엣지 연결 (기존과 동일)
-workflow.add_edge("threat_modeling", "static_analysis")
-workflow.add_edge("static_analysis", "slither") # Slither 실행 (조건부 실행은 추가 구현 필요)
-workflow.add_edge("slither", "dependency_check")
-workflow.add_edge("dependency_check", "mythril") # Mythril 실행 (조건부 실행은 추가 구현 필요)
-workflow.add_edge("mythril", "compile_report")
-workflow.add_edge("compile_report", "handle_feedback")
-workflow.add_edge("handle_feedback", "cleanup") # 피드백 처리 후 정리
-workflow.add_edge("cleanup", END) # 정리 후 최종 종료
+# 분석 후 -> 종료 (더 이상 다음 단계 없음)
+workflow.add_edge("analyze_repo", END) # 분석 후 무조건 종료
 
 # 4. 그래프 컴파일
 app = workflow.compile()
@@ -356,25 +210,17 @@ app = workflow.compile()
 # 5. 에이전트 실행 (예시)
 if __name__ == "__main__":
     github_repo_url = input("감사할 GitHub 리포지토리 URL을 입력하세요: ") or "https://github.com/Uniswap/v4-core.git"
-    initial_state = AuditState(github_url=github_repo_url)
+    # 상태 정의 축소에 따라 초기 상태 필드 조정 필요 (실제 사용 시)
+    initial_state = AuditState(github_url=github_repo_url) # 축소된 AuditState 사용
 
-    print("\n--- 감사 에이전트 실행 시작 ---")
+    print("\n--- 감사 에이전트 실행 시작 (단순화된 워크플로우) ---")
     final_state = None
     try:
-        # LangGraph 실행 및 상태 변화 스트리밍 (상세 로그 확인 시)
-        # for event in app.stream(initial_state, {"recursion_limit": 15}): # 재귀 제한 증가
-        #     for node_name, output in event.items():
-        #         print(f"\n[노드 실행 완료] '{node_name}'")
-        #         # print(f"상태 업데이트: {output}") # 상세 상태 변화 확인용
-        #     print("-" * 10)
-
-        # LangGraph 실행 (최종 결과만 필요 시)
-        final_state = app.invoke(initial_state, {"recursion_limit": 15})
+        final_state = app.invoke(initial_state, {"recursion_limit": 5}) # 재귀 제한 감소
 
     except Exception as e:
         print(f"\n워크플로우 실행 중 예상치 못한 오류 발생: {e}")
-        # 오류 발생 시에도 최종 상태 (오류 정보 포함)를 확인하거나 로깅할 수 있음
-        if final_state is None: # invoke 이전 오류
+        if final_state is None:
             print("초기 실행 단계에서 오류가 발생했을 수 있습니다.")
         else:
              print("\n오류 발생 시점의 상태:")
@@ -382,14 +228,11 @@ if __name__ == "__main__":
              print(json.dumps(final_state, indent=2, ensure_ascii=False))
     finally:
         print("\n--- 감사 에이전트 실행 완료 ---")
-        # 프로그램 종료 전 항상 정리 노드 호출 시도 (선택적)
-        # if final_state and final_state.get("local_repo_path"):
-        #     print("\n프로그램 종료 전 최종 정리 시도...")
-        #     app.invoke({"local_repo_path": final_state["local_repo_path"]}, config={"run_name": "final_cleanup", "recursion_limit": 2}, select="cleanup")
 
         if final_state:
-            print("\n최종 감사 보고서:")
-            print(final_state.get("report", "보고서가 생성되지 않았습니다."))
-            if final_state.get("feedback"):
-                print("\n사용자 피드백:")
-                print(final_state["feedback"]) 
+            print("\n최종 상태:")
+            # report 필드가 없으므로 repo_analysis 결과를 출력하거나 다른 정보 표시
+            print(f"  리포지토리 경로: {final_state.get('local_repo_path')}")
+            print(f"  분석 결과: {final_state.get('repo_analysis')}")
+            if final_state.get("error"):
+                print(f"  오류: {final_state['error']}") 
