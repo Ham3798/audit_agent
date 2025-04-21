@@ -7,7 +7,9 @@ from typing import Annotated, List, TypedDict, Union
 
 from langgraph.graph import StateGraph, END
 from git import Repo
-from crytic_compile import CryticCompile
+# crytic-compile 라이브러리 import 제거
+# from crytic_compile import CryticCompile
+# from crytic_compile.platform import exceptions as crytic_exceptions
 
 # 1. 확장된 감사 상태 정의
 class AuditState(TypedDict):
@@ -24,7 +26,7 @@ def clone_repository(state: AuditState) -> dict:
     print(f"--- 리포지토리 확인/클론 시작: {state['github_url']} -> {target_dir} ---")
 
     if os.path.exists(target_dir):
-        print(f"디렉토리 '{target_dir}'가 이미 존재합니다. 클론을 건너니다.")
+        print(f"디렉토리 '{target_dir}'가 이미 존재합니다. 클론을 건너뜁니다.")
         # TODO: 기존 리포지토리의 URL이 맞는지, 최신 상태인지 확인할 수 있습니다 (예: git pull).
         # 이 예제에서는 존재하면 그냥 사용합니다.
         return {"local_repo_path": target_dir, "error": None}
@@ -47,15 +49,16 @@ def clone_repository(state: AuditState) -> dict:
             return {"local_repo_path": None, "error": f"Failed to clone repository: {e}"}
 
 def analyze_repo_structure(state: AuditState) -> dict:
-    """프로젝트 빌드 후 crytic-compile 라이브러리로 구조 및 컴파일 정보를 분석합니다."""
-    print("--- 리포지토리 구조 분석 시작 (Build + crytic-compile library) ---")
+    """프로젝트 빌드 및 crytic-compile CLI 실행으로 분석 환경을 준비합니다."""
+    print("--- 리포지토리 분석 환경 준비 (Build + crytic-compile CLI) ---")
     repo_path = state.get("local_repo_path")
     if not repo_path or not os.path.isdir(repo_path):
         return {"error": "Repository path not valid or not found."}
 
-    analysis_result = {}
     framework = "unknown"
-    analysis_errors = [] # 오류 기록용 리스트 추가
+    analysis_errors = []
+    build_status = "pending"
+    artifacts_path = None # 아티팩트 경로 초기화
     
     try:
         # 1. 프레임워크 식별
@@ -69,106 +72,109 @@ def analyze_repo_structure(state: AuditState) -> dict:
              if framework != "unknown": break
         print(f"  > 프레임워크 식별됨: {framework}")
 
-        # 2. 네이티브 빌드 명령어 실행 (프레임워크 기반)
+        # 2. 네이티브 Clean 및 Build 명령어 실행
         build_command = None
+        clean_command = None
         if framework == 'foundry':
+            clean_command = ["forge", "clean"]
             build_command = ["forge", "build"]
+            artifacts_path = os.path.join(repo_path, 'out') # 예상 아티팩트 경로
         elif framework == 'hardhat':
-             # npx가 PATH에 있어야 함
+             clean_command = ["npx", "hardhat", "clean"]
              build_command = ["npx", "hardhat", "compile"]
+             artifacts_path = os.path.join(repo_path, 'artifacts') # 예상 아티팩트 경로
         
         build_successful = False
         if build_command:
+            # Clean 실행
+            if clean_command:
+                print(f"  > 빌드 아티팩트 정리: {' '.join(clean_command)}...")
+                try:
+                    clean_result = subprocess.run(clean_command, cwd=repo_path, capture_output=True, text=True, check=False, encoding='utf-8')
+                    if clean_result.returncode != 0:
+                         print(f"  ! 경고: '{' '.join(clean_command)}' 실행 중 오류 (코드: {clean_result.returncode}): {clean_result.stderr[:500]}...")
+                    else:
+                         print(f"  > '{' '.join(clean_command)}' 실행 성공.")
+                except Exception as clean_e:
+                     print(f"  ! 경고: '{' '.join(clean_command)}' 실행 중 예외 발생: {clean_e}")
+            
+            # Build 실행
             print(f"  > 네이티브 빌드 실행: {' '.join(build_command)}...")
             try:
-                # 빌드 명령어 실행 (실시간 출력 위해 capture_output 제거)
-                # result = subprocess.run(build_command, cwd=repo_path, capture_output=True, text=True, check=False, encoding='utf-8')
-                result = subprocess.run(build_command, cwd=repo_path, check=False) # stderr/stdout이 터미널에 직접 표시됨
-                
+                result = subprocess.run(build_command, cwd=repo_path, check=False)
                 if result.returncode != 0:
-                    # stderr가 캡처되지 않으므로 에러 메시지에서 제거
                     err_msg = f"'{ ' '.join(build_command) }' 실행 오류 (코드: {result.returncode}). 터미널 출력을 확인하세요."
                     print(f"  ! {err_msg}")
                     analysis_errors.append(err_msg)
+                    build_status = "build_failed"
                 else:
-                    print(f"\n  > '{ ' '.join(build_command) }' 실행 성공.") # 가독성을 위해 줄바꿈 추가
+                    print(f"\n  > '{ ' '.join(build_command) }' 실행 성공.")
                     build_successful = True
             except FileNotFoundError:
                 err_msg = f"'{build_command[0]}' 명령을 찾을 수 없습니다. 설치되어 있고 PATH에 있는지 확인하세요."
                 print(f"  ! {err_msg}")
                 analysis_errors.append(err_msg)
+                build_status = "tool_not_found"
             except Exception as e:
                 err_msg = f"'{ ' '.join(build_command) }' 실행 중 예외 발생: {e}"
                 print(f"  ! {err_msg}")
                 analysis_errors.append(err_msg)
+                build_status = "build_exception"
         else:
-            print("  > 프레임워크가 unknown이거나 특정 빌드 명령어가 없어 빌드를 건너니다.")
-            # 빌드 과정이 없어도 crytic-compile은 시도해볼 수 있음
-            build_successful = True 
+            print("  > 프레임워크가 unknown이거나 특정 빌드 명령어가 없어 네이티브 빌드를 건너뜁니다.")
+            build_successful = True # 빌드 건너뛰어도 crytic-compile은 시도
 
-        # 3. CryticCompile 실행 (빌드 성공 시)
+        # 3. crytic-compile CLI 실행 (네이티브 빌드 성공 시)
+        compile_successful = False
         if build_successful:
-            print(f"  > CryticCompile 초기화 (프레임워크: {framework})...")
-            compile_kwargs = {}
-            if framework != 'unknown':
-                compile_kwargs['compile_force_framework'] = framework
-            
-            crytic_compile = CryticCompile(repo_path, **compile_kwargs)
-            print("  > CryticCompile 분석 완료.")
-
-            # 4. 분석 결과 추출
-            contracts_summary = []
-            compiler_versions = set()
-            for unit_name, compilation_unit in crytic_compile.compilation_units.items():
-                if hasattr(compilation_unit, 'compiler_version') and compilation_unit.compiler_version:
-                     compiler_version_obj = compilation_unit.compiler_version
-                     if hasattr(compiler_version_obj, 'version'):
-                          compiler_versions.add(compiler_version_obj.version)
-                     else:
-                          compiler_versions.add(str(compiler_version_obj))
+            print(f"  > crytic-compile CLI 실행: crytic-compile . ...")
+            try:
+                # crytic-compile 명령어 실행 (출력은 터미널에 표시됨)
+                compile_cmd = ["crytic-compile", "."]
+                 # 프레임워크 힌트 추가 (선택적이지만 권장)
+                if framework != 'unknown':
+                     compile_cmd.extend(["--compile-force-framework", framework])
                 
-                if hasattr(compilation_unit, 'contracts') and compilation_unit.contracts:
-                    for contract_object in compilation_unit.contracts:
-                        if hasattr(contract_object, 'name'):
-                            contract_name = contract_object.name
-                            relative_path = os.path.relpath(unit_name, repo_path) if os.path.isabs(unit_name) else unit_name
-                            contracts_summary.append({
-                                "name": contract_name, 
-                                "source_path": relative_path 
-                            })
-            
-            artifacts_path = None
-            if framework == 'foundry':
-                artifacts_path = os.path.join(repo_path, 'out')
-            elif framework == 'hardhat':
-                 artifacts_path = os.path.join(repo_path, 'artifacts')
-            potential_cache_path = os.path.join(repo_path, 'crytic-compile-cache')
-            if artifacts_path is None and os.path.isdir(potential_cache_path):
-                 artifacts_path = potential_cache_path
-            
-            analysis_result = {
-                "contracts": sorted(contracts_summary, key=lambda x: x['source_path']),
-                "framework": framework,
-                "compiler_versions": sorted(list(compiler_versions)),
-                "artifacts_path": artifacts_path
-            }
-            print(f"분석 완료: {len(contracts_summary)}개의 컨트랙트 발견, 프레임워크: {framework}")
-            print(f"  > 사용된 컴파일러 버전: {analysis_result['compiler_versions']}")
-            print(f"  > 아티팩트 경로 (추정): {artifacts_path}")
+                result = subprocess.run(compile_cmd, cwd=repo_path, check=False)
+                if result.returncode != 0:
+                    err_msg = f"'crytic-compile .' 실행 오류 (코드: {result.returncode}). 터미널 출력을 확인하세요."
+                    print(f"  ! {err_msg}")
+                    analysis_errors.append(err_msg)
+                    build_status = "compile_failed" if build_status == "pending" or build_status == "success" else build_status
+                else:
+                    print(f"\n  > 'crytic-compile .' 실행 성공.")
+                    compile_successful = True
+                    build_status = "success" # 최종 성공 상태
+            except FileNotFoundError:
+                err_msg = "'crytic-compile' 명령을 찾을 수 없습니다. 설치되어 있고 PATH에 있는지 확인하세요."
+                print(f"  ! {err_msg}")
+                analysis_errors.append(err_msg)
+                build_status = "tool_not_found"
+            except Exception as e:
+                err_msg = f"'crytic-compile .' 실행 중 예외 발생: {e}"
+                print(f"  ! {err_msg}")
+                analysis_errors.append(err_msg)
+                build_status = "compile_exception" if build_status == "pending" or build_status == "success" else build_status
         else:
-             print("  > 빌드 실패로 CryticCompile 분석을 건너니다.")
-             # 빌드 실패 시 analysis_result는 비어있음
+             print("  > 네이티브 빌드 실패로 crytic-compile CLI 실행을 건너뜁니다.")
+             # build_status는 이미 설정됨
 
-        # 최종 상태 반환 (오류 포함 가능)
+        # 4. 최종 결과 조합 (상세 정보 없이 상태 위주)
+        analysis_result = {
+            "framework": framework,
+            "build_status": build_status,
+            "artifacts_path": artifacts_path if build_status == "success" else None, # 성공 시에만 경로 유효
+            # 상세 컨트랙트 목록, 컴파일러 버전 등은 여기서 얻을 수 없음
+        }
+        print(f"분석 환경 준비 완료: 상태 = {build_status}, 프레임워크 = {framework}")
+        
         return {"repo_analysis": analysis_result, "error": "; ".join(analysis_errors) if analysis_errors else None}
 
     except Exception as e:
-        # 전체 분석 프로세스 중 예외 발생
-        err_msg = f"리포지토리 분석 중 치명적 오류 발생: {e}"
+        err_msg = f"리포지토리 분석 환경 준비 중 치명적 오류 발생: {e}"
         print(f"  ! {err_msg}")
-        # 기존 오류에 추가
         analysis_errors.append(err_msg)
-        return {"repo_analysis": None, "error": "; ".join(analysis_errors)}
+        return {"repo_analysis": {"build_status": "fatal_error"}, "error": "; ".join(analysis_errors)}
 
 # --- 조건부 엣지 로직 --- #
 def should_continue_after_clone(state: AuditState) -> str:
@@ -213,10 +219,12 @@ if __name__ == "__main__":
     # 상태 정의 축소에 따라 초기 상태 필드 조정 필요 (실제 사용 시)
     initial_state = AuditState(github_url=github_repo_url) # 축소된 AuditState 사용
 
-    print("\n--- 감사 에이전트 실행 시작 (단순화된 워크플로우) ---")
+    print("initial_state: ", initial_state)
+    print("\n--- audit_agent start ---")
+
     final_state = None
     try:
-        final_state = app.invoke(initial_state, {"recursion_limit": 5}) # 재귀 제한 감소
+        final_state = app.invoke(initial_state)
 
     except Exception as e:
         print(f"\n워크플로우 실행 중 예상치 못한 오류 발생: {e}")
@@ -230,7 +238,7 @@ if __name__ == "__main__":
         print("\n--- 감사 에이전트 실행 완료 ---")
 
         if final_state:
-            print("\n최종 상태:")
+            print("\nfinal_state:")
             # report 필드가 없으므로 repo_analysis 결과를 출력하거나 다른 정보 표시
             print(f"  리포지토리 경로: {final_state.get('local_repo_path')}")
             print(f"  분석 결과: {final_state.get('repo_analysis')}")
