@@ -2,6 +2,7 @@ langgraph
 langchain-core # LangGraph는 종종 LangChain 핵심 구성 요소에 의존합니다.
 GitPython # GitHub 리포지토리 클론용
 crytic-compile
+slither-analyzer # Slither 정적 분석 도구
 
 # --- 테스트 --- #
 pytest
