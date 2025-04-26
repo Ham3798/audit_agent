@@ -1,5 +1,6 @@
 import os
 import re # 정규 표현식 모듈 임포트
+import traceback
 from typing import Optional, List, Set, Dict, Any
 from pathlib import Path
 from crytic_compile import CryticCompile, InvalidCompilation

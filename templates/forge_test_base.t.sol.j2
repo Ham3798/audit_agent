@@ -13,7 +13,7 @@ contract {{ test_contract_name }} is Test {
 
     // --- State Variables ---
     // Target contract instance (filled by generator)
-    // {{ target_contract_declaration }}; // 예: TargetContract internal targetContract;
+    // {{ target_contract_declaration }}
 
     // Mock contract instances (filled by generator)
     /*
@@ -42,7 +42,7 @@ contract {{ test_contract_name }} is Test {
     // MCP Test for Scenario: {{ scenario.id }} - {{ scenario.category }}
     // Description: {{ scenario.description }}
     function test_{{ scenario_id_snake_case }}() public {
-        console.log("Scenario: {{ scenario.id }} - Precondition: {{ scenario.precondition }}");
+        console.log(unicode"Scenario: {{ scenario.id }} - Precondition: {{ scenario.precondition }}");
 
         // --- Test Specific Setup ---
         /*
