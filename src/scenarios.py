@@ -23,6 +23,8 @@ class ThreatScenario(TypedDict, total=False):
     action_code: Optional[str]            # 실행할 실제 Solidity 코드 조각 (action_function 대신 사용 가능)
     expected_revert_selector: Optional[str] # vm.expectRevert에 사용할 에러 셀렉터 문자열 (예: "Hooks.HookAddressNotValid.selector")
     assertion_code: Optional[str]         # revert가 아닐 경우 사용할 Solidity 검증 코드 조각
+    # --- 헬퍼 컨트랙트 관련 필드 (선택적) ---
+    helper_contracts: Optional[List[dict]]  # 시나리오별로 필요한 헬퍼 컨트랙트 정보 리스트 (이름, 생성자 인자, 정의 코드 등)
 
 # 초기 시나리오 목록 (예시 값 포함)
 SCENARIOS: List[ThreatScenario] = [
@@ -35,8 +37,8 @@ SCENARIOS: List[ThreatScenario] = [
         "expected": "vm.expectRevert(Hooks.HookAddressNotValid.selector)",
         # "template": "forge_test_base.t.sol.j2", # 제거됨
         "target_contract_name": "PoolManager",
-        "target_contract_declaration": "PoolManager internal targetContract;",
-        "target_contract_instance_name": "targetContract",
+        "target_contract_declaration": "PoolManager internal _targetContract;",
+        "target_contract_instance_name": "_targetContract",
         "required_imports": [
             'import { PoolManager } from "src/PoolManager.sol";',
             'import { IPoolManager } from "src/interfaces/IPoolManager.sol";',
@@ -49,7 +51,7 @@ SCENARIOS: List[ThreatScenario] = [
         "setup_code": """
         TestERC20 token0 = new TestERC20(1e27);
         TestERC20 token1 = new TestERC20(1e27);
-        targetContract = new PoolManager(address(this));
+        _targetContract = new PoolManager(address(this));
         """,
         "test_setup_code": """
         TestERC20 token0 = new TestERC20(1e27);
@@ -69,7 +71,7 @@ SCENARIOS: List[ThreatScenario] = [
         });
         uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
         """,
-        "action_code": "targetContract.initialize(key, initialSqrtPrice);",
+        "action_code": "_targetContract.initialize(key, initialSqrtPrice);",
         "expected_revert_selector": "Hooks.HookAddressNotValid.selector"
     },
     {
@@ -81,8 +83,8 @@ SCENARIOS: List[ThreatScenario] = [
         "expected": "vm.expectRevert(Hooks.HookAddressNotValid.selector)",
         # "template": "forge_test_base.t.sol.j2", # 제거됨
         "target_contract_name": "PoolManager",
-        "target_contract_declaration": "PoolManager internal targetContract;",
-        "target_contract_instance_name": "targetContract",
+        "target_contract_declaration": "PoolManager internal _targetContract;",
+        "target_contract_instance_name": "_targetContract",
         "required_imports": [
             'import { PoolManager } from "src/PoolManager.sol";',
             'import { IPoolManager } from "src/interfaces/IPoolManager.sol";',
@@ -96,7 +98,7 @@ SCENARIOS: List[ThreatScenario] = [
         "setup_code": """
         TestERC20 token0 = new TestERC20(1e27);
         TestERC20 token1 = new TestERC20(1e27);
-        targetContract = new PoolManager(address(this));
+        _targetContract = new PoolManager(address(this));
         """,
         "test_setup_code": """
         TestERC20 token0 = new TestERC20(1e27);
@@ -110,7 +112,7 @@ SCENARIOS: List[ThreatScenario] = [
         });
         uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
         """,
-        "action_code": "targetContract.initialize(key, initialSqrtPrice);",
+        "action_code": "_targetContract.initialize(key, initialSqrtPrice);",
         "expected_revert_selector": "Hooks.HookAddressNotValid.selector"
     },
     {
@@ -123,14 +125,14 @@ SCENARIOS: List[ThreatScenario] = [
         # "template": "forge_test_base.t.sol.j2", # 제거됨
         "target_contract_name": "PoolManager",
         "target_contract_declaration": """
-        PoolManager internal targetContract;
+        PoolManager internal _targetContract;
         TestERC20 internal token0;
         TestERC20 internal token1;
         DeltaReturningHook internal deltaHook;
         PoolModifyLiquidityTest internal liquidityProvider;
         PoolKey internal key; // setup과 test_setup에서 공유되므로 상태 변수로 이동
         """,
-        "target_contract_instance_name": "targetContract",
+        "target_contract_instance_name": "_targetContract",
         "required_imports": [
             'import { PoolManager } from "src/PoolManager.sol";',
             'import { IPoolManager } from "src/interfaces/IPoolManager.sol";',
@@ -147,8 +149,8 @@ SCENARIOS: List[ThreatScenario] = [
         "setup_code": """
         token0 = new TestERC20(1e27);
         token1 = new TestERC20(1e27);
-        targetContract = new PoolManager(address(this));
-        deltaHook = new DeltaReturningHook(IPoolManager(address(targetContract)));
+        _targetContract = new PoolManager(address(this));
+        deltaHook = new DeltaReturningHook(IPoolManager(address(_targetContract)));
 
         key = PoolKey({
             currency0: Currency.wrap(address(token0)),
@@ -158,9 +160,9 @@ SCENARIOS: List[ThreatScenario] = [
             hooks: IHooks(address(deltaHook))
         });
         uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
-        targetContract.initialize(key, initialSqrtPrice);
+        _targetContract.initialize(key, initialSqrtPrice);
 
-        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(targetContract)));
+        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(_targetContract)));
         token0.approve(address(liquidityProvider), type(uint256).max);
         token1.approve(address(liquidityProvider), type(uint256).max);
         vm.startPrank(address(liquidityProvider));
@@ -184,7 +186,7 @@ SCENARIOS: List[ThreatScenario] = [
         bytes memory hookData = abi.encode(address(this)); // Pass caller address as hookData
 
         // SwapExecutor 인스턴스 생성 (token0, token1은 상태 변수 사용)
-        SwapExecutor callback = new SwapExecutor(IPoolManager(address(targetContract)), address(token0), address(token1));
+        SwapExecutor callback = new SwapExecutor(IPoolManager(address(_targetContract)), address(token0), address(token1));
         callback.setSwapParams(key, params, hookData);
 
         // 토큰 전송 및 승인
@@ -197,7 +199,7 @@ SCENARIOS: List[ThreatScenario] = [
         // Use the callback instance created in test_setup_code
         bytes memory unlockData = abi.encodeWithSelector(SwapExecutor.unlockCallback.selector, bytes("")); // Pass empty bytes if unlockCallback doesn't expect specific data
         vm.prank(address(callback));
-        targetContract.unlock(unlockData);
+        _targetContract.unlock(unlockData);
         """,
         "expected_revert_selector": "Hooks.HookDeltaExceedsSwapAmount.selector"
     },
@@ -211,14 +213,14 @@ SCENARIOS: List[ThreatScenario] = [
         # "template": "forge_test_base.t.sol.j2", # 제거됨
         "target_contract_name": "PoolManager",
         "target_contract_declaration": """
-        PoolManager internal targetContract;
+        PoolManager internal _targetContract;
         TestERC20 internal token0;
         TestERC20 internal token1;
         RevertingHook internal revertingHook; // setup에서 정의
         PoolModifyLiquidityTest internal liquidityProvider;
         PoolKey internal key; // 상태 변수로 이동
         """,
-        "target_contract_instance_name": "targetContract",
+        "target_contract_instance_name": "_targetContract",
         "required_imports": [
             'import { PoolManager } from "src/PoolManager.sol";',
             'import { IPoolManager } from "src/interfaces/IPoolManager.sol";',
@@ -235,7 +237,7 @@ SCENARIOS: List[ThreatScenario] = [
         "setup_code": """
         token0 = new TestERC20(1e27);
         token1 = new TestERC20(1e27);
-        targetContract = new PoolManager(address(this));
+        _targetContract = new PoolManager(address(this));
         // RevertingHook 인스턴스 생성 (정의는 테스트 파일 내 LLM이 생성)
         revertingHook = new RevertingHook(IHooks.beforeSwap.selector);
         """,
@@ -250,10 +252,10 @@ SCENARIOS: List[ThreatScenario] = [
             hooks: IHooks(address(revertingHook)) // revertingHook 주소 사용
         });
         uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
-        targetContract.initialize(key, initialSqrtPrice);
+        _targetContract.initialize(key, initialSqrtPrice);
 
         // liquidityProvider 설정 및 유동성 공급 (key 사용)
-        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(targetContract)));
+        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(_targetContract)));
         token0.approve(address(liquidityProvider), 1e18);
         token1.approve(address(liquidityProvider), 1e18);
         vm.startPrank(address(liquidityProvider));
@@ -265,7 +267,7 @@ SCENARIOS: List[ThreatScenario] = [
         bytes memory hookData = ""; // No specific hook data needed for RevertingHook scenario
 
         // SwapExecutor 인스턴스 생성
-        SwapExecutor callback = new SwapExecutor(IPoolManager(address(targetContract)), address(token0), address(token1));
+        SwapExecutor callback = new SwapExecutor(IPoolManager(address(_targetContract)), address(token0), address(token1));
         callback.setSwapParams(key, params, hookData);
 
         // 토큰 전송 및 승인
@@ -278,9 +280,17 @@ SCENARIOS: List[ThreatScenario] = [
         // Use the callback instance created in test_setup_code
         bytes memory unlockData = abi.encodeWithSelector(SwapExecutor.unlockCallback.selector, bytes(""));
         vm.prank(address(callback));
-        targetContract.unlock(unlockData);
+        _targetContract.unlock(unlockData);
         """,
-        "expected_revert_selector": "Hooks.HookCallFailed.selector" # beforeSwap revert 시 HookCallFailed 발생 예상
+        "expected_revert_selector": "Hooks.HookCallFailed.selector",
+        "helper_contracts": [
+            {
+                "name": "RevertingHook",
+                "instance_name": "revertingHook",
+                "constructor_args": ["IHooks.beforeSwap.selector"],
+                "definition_code": "// beforeSwap이 무조건 revert하는 훅 컨트랙트 정의"
+            }
+        ]
     },
     {
         "id": "D-3.3",
@@ -292,13 +302,13 @@ SCENARIOS: List[ThreatScenario] = [
         # "template": "forge_test_base.t.sol.j2", # 제거됨
         "target_contract_name": "PoolManager",
         "target_contract_declaration": """
-        PoolManager internal targetContract;
+        PoolManager internal _targetContract;
         TestERC20 internal token0;
         TestERC20 internal token1;
         PoolModifyLiquidityTest internal liquidityProvider;
         PoolKey internal key; // 상태 변수로 이동
         """,
-        "target_contract_instance_name": "targetContract",
+        "target_contract_instance_name": "_targetContract",
         "required_imports": [
             'import { PoolManager } from "src/PoolManager.sol";',
             'import { IPoolManager } from "src/interfaces/IPoolManager.sol";',
@@ -313,11 +323,11 @@ SCENARIOS: List[ThreatScenario] = [
         "setup_code": """
         token0 = new TestERC20(1e27);
         token1 = new TestERC20(1e27);
-        targetContract = new PoolManager(address(this));
+        _targetContract = new PoolManager(address(this));
         key = PoolKey({ currency0: Currency.wrap(address(token0)), currency1: Currency.wrap(address(token1)), fee: 3000, tickSpacing: 60, hooks: IHooks(address(0))});
         uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
-        targetContract.initialize(key, initialSqrtPrice);
-        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(targetContract)));
+        _targetContract.initialize(key, initialSqrtPrice);
+        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(_targetContract)));
         token0.approve(address(liquidityProvider), type(uint256).max);
         token1.approve(address(liquidityProvider), type(uint256).max);
         vm.startPrank(address(liquidityProvider));
@@ -328,7 +338,7 @@ SCENARIOS: List[ThreatScenario] = [
         # NonSettlingCallback 정의는 여기서 제거됨. 인스턴스 생성만 남김.
         "test_setup_code": """
         // NonSettlingCallback 인스턴스 생성 (정의는 LLM이 생성)
-        NonSettlingCallback callback = new NonSettlingCallback(IPoolManager(address(targetContract)), address(token0));
+        NonSettlingCallback callback = new NonSettlingCallback(IPoolManager(address(_targetContract)), address(token0));
         callback.setKey(key); // key는 상태 변수
 
         // 스왑에 필요한 토큰 준비 및 전송
@@ -350,9 +360,17 @@ SCENARIOS: List[ThreatScenario] = [
         // However, D-3.3 description says "manager.unlock(abi.encode(nonSettlingCallback))"
         // Let's try encoding just the address as data, as it's the most likely interpretation
         bytes memory callbackData = abi.encode(address(callback));
-        targetContract.unlock(callbackData);
+        _targetContract.unlock(callbackData);
         """,
-        "expected_revert_selector": "IPoolManager.CurrencyNotSettled.selector"
+        "expected_revert_selector": "IPoolManager.CurrencyNotSettled.selector",
+        "helper_contracts": [
+            {
+                "name": "NonSettlingCallback",
+                "instance_name": "callback",
+                "constructor_args": ["IPoolManager(address(_targetContract))", "address(token0)"],
+                "definition_code": "// unlockCallback에서 swap만 실행하고 정산하지 않는 콜백 컨트랙트 정의"
+            }
+        ]
     },
     {
         "id": "R-6.1",
@@ -364,13 +382,13 @@ SCENARIOS: List[ThreatScenario] = [
         # "template": "forge_test_base.t.sol.j2", # 제거됨
         "target_contract_name": "PoolManager",
         "target_contract_declaration": """
-        PoolManager internal targetContract;
+        PoolManager internal _targetContract;
         TestERC20 internal token0;
         TestERC20 internal token1;
         PoolModifyLiquidityTest internal liquidityProvider;
         PoolKey internal key; // 상태 변수로 이동
         """,
-        "target_contract_instance_name": "targetContract",
+        "target_contract_instance_name": "_targetContract",
         "required_imports": [
             'import { PoolManager } from "src/PoolManager.sol";',
             'import { IPoolManager } from "src/interfaces/IPoolManager.sol";',
@@ -385,11 +403,11 @@ SCENARIOS: List[ThreatScenario] = [
         "setup_code": """
         token0 = new TestERC20(1e27);
         token1 = new TestERC20(1e27);
-        targetContract = new PoolManager(address(this));
+        _targetContract = new PoolManager(address(this));
         key = PoolKey({ currency0: Currency.wrap(address(token0)), currency1: Currency.wrap(address(token1)), fee: 3000, tickSpacing: 60, hooks: IHooks(address(0))});
         uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
-        targetContract.initialize(key, initialSqrtPrice);
-        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(targetContract)));
+        _targetContract.initialize(key, initialSqrtPrice);
+        liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(_targetContract)));
         token0.approve(address(liquidityProvider), type(uint256).max);
         token1.approve(address(liquidityProvider), type(uint256).max);
         vm.startPrank(address(liquidityProvider));
@@ -400,7 +418,7 @@ SCENARIOS: List[ThreatScenario] = [
         # ReentrantCallback 정의는 여기서 제거됨. 인스턴스 생성만 남김.
         "test_setup_code": """
         // ReentrantCallback 인스턴스 생성 (정의는 LLM이 생성)
-        ReentrantCallback callback = new ReentrantCallback(IPoolManager(address(targetContract)));
+        ReentrantCallback callback = new ReentrantCallback(IPoolManager(address(_targetContract)));
         callback.setKey(key); // key는 상태 변수
          """,
         "action_code": """
@@ -408,9 +426,17 @@ SCENARIOS: List[ThreatScenario] = [
         // Encode the callback address as data for unlock
         bytes memory callbackData = abi.encode(address(callback));
         vm.prank(address(callback));
-        targetContract.unlock(callbackData);
+        _targetContract.unlock(callbackData);
         """,
-        "expected_revert_selector": "IPoolManager.ManagerLocked.selector"
+        "expected_revert_selector": "IPoolManager.ManagerLocked.selector",
+        "helper_contracts": [
+            {
+                "name": "ReentrantCallback",
+                "instance_name": "callback",
+                "constructor_args": ["IPoolManager(address(_targetContract))"],
+                "definition_code": "// unlockCallback에서 manager.swap을 재진입 호출하는 콜백 컨트랙트 정의"
+            }
+        ]
     },
 ]
 
