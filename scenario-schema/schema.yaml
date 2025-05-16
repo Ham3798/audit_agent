@@ -1,39 +1,4 @@
-# mcp-server
-
-```mermaid
----
-config:
-  theme: neo
-  layout: dagre
----
-classDiagram
-    class LocalMCPServer {
-      +handleScenario(schema:YAML)
-      +dispatchTool(toolName:String)
-    }
-    class FoundryTool {
-      +compileContracts()
-      +runUnitTest()
-      +collectForgeLogs():Log
-    }
-    class UnitTestGenTool {
-      +generateTestCode(spec:JSON)
-    }
-    class ScenarioValidationTool {
-      +buildValidationPrompt(scenarioInfo:JSON, forgeLogs:Log)
-      +runValidation(unittest:t.sol)
-    }
-
-    LocalMCPServer --> FoundryTool            : invokes
-    LocalMCPServer --> UnitTestGenTool        : generates tests via
-    LocalMCPServer --> ScenarioValidationTool : validates scenarios via
-    FoundryTool      --> ScenarioValidationTool : provides forgeLogs
-
-```
-
 # scenario schema
-
-```
 schema_version: "scenario-schema-1.0"
 
 ###############################################################################
@@ -304,5 +269,3 @@ runlog:
       decoded_logs    : []             # 리스트
     patch_suggestion  : |              # 다음 수정 제안
       ""
-
-```
