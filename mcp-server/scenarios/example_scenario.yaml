@@ -1,0 +1,10 @@
+meta:
+  id: example_scenario_001
+spec:
+  description: "테스트용 예제 시나리오입니다."
+code: {}
+hints: {}
+prompt_ctx: {}
+patches: []
+runlog: []
+extras: {} 

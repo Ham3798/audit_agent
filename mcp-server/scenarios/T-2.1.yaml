@@ -1,0 +1,228 @@
+meta:
+  id: T-2.1
+  title: "Hook Return Manipulation (BeforeSwap Delta): beforeSwap 훅이 스왑 방향을 뒤집는 델타 반환 시 거부"
+  category: "Tampering"
+  severity: "medium"
+  tags: []
+  author: ""
+  created: ""
+spec:
+  description: "beforeSwap 훅이 amountSpecified 절대값보다 큰 반대 부호의 deltaSpecified 반환 설정"
+  actors:
+    - id: "user"
+      role: "EOA user"
+      trust_level: "untrusted"
+  assets:
+    - name: "Hook"
+      type: "address"
+      critical: true
+  components:
+    - name: "PoolManager"
+      type: "contract"
+      deployed_at: ""
+  trust_boundaries:
+    - from: "user"
+      to: "PoolManager"
+      enforcement: "msg.sender check"
+  data_flows:
+    - source: "user"
+      target: "PoolManager"
+      function: "swap"
+      params:
+        - name: "key"
+          value: "malicious"
+        - name: "params"
+          value: "malicious"
+        - name: "hookData"
+          value: "malicious"
+  behaviors:
+    - actor: "user"
+      action: "calls swap with malicious beforeSwap delta"
+  precondition: "beforeSwap 훅이 amountSpecified 절대값보다 큰 반대 부호의 deltaSpecified 반환 설정"
+  action: "targetContract.swap(key, params, hookData); // Via Unlock"
+  expected: "vm.expectRevert(Hooks.HookDeltaExceedsSwapAmount.selector)"
+code:
+  compiler_version: ""
+  target_contract_name: "PoolManager"
+  target_contract_declaration: |
+    PoolManager internal _targetContract;
+    TestERC20 internal token0;
+    TestERC20 internal token1;
+    DeltaReturningHook internal deltaHook;
+    PoolModifyLiquidityTest internal liquidityProvider;
+    PoolKey internal key; // setup과 test_setup에서 공유되므로 상태 변수로 이동
+  target_contract_instance_name: "_targetContract"
+  required_imports:
+    - 'import { PoolManager } from "src/PoolManager.sol";'
+    - 'import { IPoolManager } from "src/interfaces/IPoolManager.sol";'
+    - 'import { PoolKey } from "src/types/PoolKey.sol";'
+    - 'import { Currency, CurrencyLibrary } from "src/types/Currency.sol";'
+    - 'import { IHooks } from "src/interfaces/IHooks.sol";'
+    - 'import { Hooks } from "src/libraries/Hooks.sol";'
+    - 'import { TestERC20 } from "src/test/TestERC20.sol";'
+    - 'import { PoolModifyLiquidityTest } from "src/test/PoolModifyLiquidityTest.sol";'
+    - 'import { IUnlockCallback } from "src/interfaces/callback/IUnlockCallback.sol";'
+    - 'import { BalanceDelta, BalanceDeltaLibrary } from "src/types/BalanceDelta.sol";'
+    - 'import { ModifyLiquidityParams, SwapParams } from "src/types/PoolOperation.sol";'
+    - 'import { BeforeSwapDelta, toBeforeSwapDelta } from "src/types/BeforeSwapDelta.sol";'
+  setup_code: |
+    token0 = new TestERC20(1e27);
+    token1 = new TestERC20(1e27);
+    _targetContract = new PoolManager(address(this));
+    deltaHook = new DeltaReturningHook(IPoolManager(address(_targetContract)));
+
+    key = PoolKey({
+        currency0: Currency.wrap(address(token0)),
+        currency1: Currency.wrap(address(token1)),
+        fee: 3000,
+        tickSpacing: 60,
+        hooks: IHooks(address(deltaHook))
+    });
+    uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
+    _targetContract.initialize(key, initialSqrtPrice);
+
+    liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(_targetContract)));
+    token0.approve(address(liquidityProvider), type(uint256).max);
+    token1.approve(address(liquidityProvider), type(uint256).max);
+
+    // Deal tokens to liquidityProvider AFTER initialization and BEFORE prank
+    token0.mint(address(liquidityProvider), 2e18);
+    token1.mint(address(liquidityProvider), 2e18);
+
+    vm.startPrank(address(liquidityProvider));
+    ModifyLiquidityParams memory lpParams = ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: 1e18, salt: bytes32(0)});
+    liquidityProvider.modifyLiquidity(key, lpParams, "");
+    vm.stopPrank();
+  test_setup_code: |
+    int128 amountSpecified = -1e17;
+    int128 maliciousDelta = 1e17 + 100; // 양수 delta 반환 (zeroForOne=true 스왑과 반대)
+    deltaHook.setDeltaSpecified(maliciousDelta);
+
+    SwapParams memory params = SwapParams({
+        zeroForOne: true,
+        amountSpecified: amountSpecified,
+        sqrtPriceLimitX96: 4295128739 // Lower limit for zeroForOne swap
+    });
+    bytes memory hookData = abi.encode(address(this)); // Pass caller address as hookData
+
+    // SwapExecutor 인스턴스 생성 (token0, token1은 상태 변수 사용)
+    SwapExecutor callback = new SwapExecutor(IPoolManager(address(_targetContract)), address(token0), address(token1));
+    callback.setSwapParams(key, params, hookData);
+
+    // 토큰 전송 및 승인
+    uint256 amountToSend = 1e17; // Directly use the positive value since amountSpecified is -1e17
+    token0.approve(address(callback), amountToSend);
+    // vm.deal(address(callback), 1 ether); // Ether deal might not be necessary if callback pays with tokens
+    token0.transfer(address(callback), amountToSend);
+  action_function: null
+  action_code: |
+    // Use the callback instance created in test_setup_code
+    bytes memory unlockData = abi.encodeWithSelector(SwapExecutor.unlockCallback.selector, bytes("")); // Pass empty bytes if unlockCallback doesn't expect specific data
+    vm.prank(address(callback));
+    _targetContract.unlock(unlockData);
+  expected_revert_selector: "Hooks.HookDeltaExceedsSwapAmount.selector"
+  assertion_code: null
+  helper_contracts:
+    - name: "DeltaReturningHook"
+      instance_name: "deltaHook"
+      constructor_args:
+        - "IPoolManager(address(_targetContract))"
+      definition_code: |
+        contract DeltaReturningHook is IHooks {
+            IPoolManager public immutable manager;
+            int128 deltaSpecified;
+
+            constructor(IPoolManager _manager) {
+                manager = _manager;
+            }
+
+            function setDeltaSpecified(int128 _delta) public {
+                deltaSpecified = _delta;
+            }
+
+            function beforeSwap(address /*sender*/, PoolKey calldata /*key*/, SwapParams calldata /*params*/, bytes calldata /*hookData*/) external view override returns (bytes4, BeforeSwapDelta, uint24) {
+                // Return the specified delta and 0 for unspecified delta
+                BeforeSwapDelta hookDelta = toBeforeSwapDelta(deltaSpecified, 0);
+                return (IHooks.beforeSwap.selector, hookDelta, 0);
+            }
+
+            // Implement other IHooks functions as needed, returning their respective selectors
+            function beforeInitialize(address, PoolKey calldata, uint160) external pure override returns (bytes4) {
+                return IHooks.beforeInitialize.selector;
+            }
+            function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
+                return IHooks.afterInitialize.selector;
+            }
+            function beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata) external pure override returns (bytes4) {
+                return IHooks.beforeAddLiquidity.selector;
+            }
+            function afterAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, BalanceDelta, BalanceDelta, bytes calldata) external pure override returns (bytes4, BalanceDelta) {
+                return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+            }
+            function beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata) external pure override returns (bytes4) {
+                return IHooks.beforeRemoveLiquidity.selector;
+            }
+            function afterRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, BalanceDelta, BalanceDelta, bytes calldata) external pure override returns (bytes4, BalanceDelta) {
+                return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+            }
+            function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata) external pure override returns (bytes4, int128) {
+                return (IHooks.afterSwap.selector, 0);
+            }
+            function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure override returns (bytes4) {
+                return IHooks.beforeDonate.selector;
+            }
+            function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure override returns (bytes4) {
+                return IHooks.afterDonate.selector;
+            }
+        }
+    - name: "SwapExecutor"
+      instance_name: "callback"
+      constructor_args:
+        - "IPoolManager(address(_targetContract))"
+        - "address(token0)"
+        - "address(token1)"
+      definition_code: |
+        contract SwapExecutor is IUnlockCallback {
+            IPoolManager public immutable manager;
+            address public immutable token0;
+            address public immutable token1;
+
+            PoolKey key;
+            SwapParams params;
+            bytes hookData;
+
+            constructor(IPoolManager _manager, address _token0, address _token1) {
+                manager = _manager;
+                token0 = _token0;
+                token1 = _token1;
+            }
+
+            function setSwapParams(PoolKey memory _key, SwapParams memory _params, bytes memory _hookData) public {
+                key = _key;
+                params = _params;
+                hookData = _hookData;
+            }
+
+            function unlockCallback(bytes calldata) external override returns (bytes memory) {
+                // Perform the swap within the callback
+                manager.swap(key, params, hookData);
+                // Settle the amounts owed (send excess tokens back to caller)
+                if (params.amountSpecified > 0) {
+                    if (token1 != address(0)) {
+                        uint256 balance1 = TestERC20(token1).balanceOf(address(this));
+                        if (balance1 > 0) TestERC20(token1).transfer(msg.sender, balance1);
+                    }
+                } else {
+                    if (token0 != address(0)) {
+                        uint256 balance0 = TestERC20(token0).balanceOf(address(this));
+                        if (balance0 > 0) TestERC20(token0).transfer(msg.sender, balance0);
+                    }
+                }
+                return "";
+            }
+        }
+hints: {}
+prompt_ctx: {}
+patches: []
+runlog: []
+extras: {} 

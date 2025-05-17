@@ -1,0 +1,134 @@
+meta:
+  id: D-3.3
+  title: "Callback Non-Settlement DoS: unlockCallback에서 델타 발생 후 정산하지 않아 종료 시 revert"
+  category: "Denial of Service"
+  severity: "medium"
+  tags: []
+  author: ""
+  created: ""
+spec:
+  description: "NonSettlingCallback 컨트랙트가 unlockCallback에서 swap 실행 후 settle/take 미호출"
+  actors:
+    - id: "user"
+      role: "EOA user"
+      trust_level: "untrusted"
+  assets:
+    - name: "Hook"
+      type: "address"
+      critical: true
+  components:
+    - name: "PoolManager"
+      type: "contract"
+      deployed_at: ""
+  trust_boundaries:
+    - from: "user"
+      to: "PoolManager"
+      enforcement: "msg.sender check"
+  data_flows:
+    - source: "user"
+      target: "PoolManager"
+      function: "unlock"
+      params:
+        - name: "callback"
+          value: "nonSettling"
+  behaviors:
+    - actor: "user"
+      action: "calls unlock with NonSettlingCallback that does not settle after swap"
+  precondition: "NonSettlingCallback 컨트랙트가 unlockCallback에서 swap 실행 후 settle/take 미호출"
+  action: "manager.unlock(abi.encode(nonSettlingCallback))"
+  expected: "vm.expectRevert(IPoolManager.CurrencyNotSettled.selector)"
+code:
+  compiler_version: ""
+  target_contract_name: "PoolManager"
+  target_contract_declaration: |
+    PoolManager internal _targetContract;
+    TestERC20 internal token0;
+    TestERC20 internal token1;
+    PoolModifyLiquidityTest internal liquidityProvider;
+    PoolKey internal key; // 상태 변수로 이동
+  target_contract_instance_name: "_targetContract"
+  required_imports:
+    - 'import { PoolManager } from "src/PoolManager.sol";'
+    - 'import { IPoolManager } from "src/interfaces/IPoolManager.sol";'
+    - 'import { PoolKey } from "src/types/PoolKey.sol";'
+    - 'import { Currency, CurrencyLibrary } from "src/types/Currency.sol";'
+    - 'import { IHooks } from "src/interfaces/IHooks.sol";'
+    - 'import { TestERC20 } from "src/test/TestERC20.sol";'
+    - 'import { PoolModifyLiquidityTest } from "src/test/PoolModifyLiquidityTest.sol";'
+    - 'import { IUnlockCallback } from "src/interfaces/callback/IUnlockCallback.sol";'
+    - 'import { console } from "forge-std/console.sol";'
+    - 'import { ModifyLiquidityParams, SwapParams } from "src/types/PoolOperation.sol";'
+    - 'import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "src/types/BeforeSwapDelta.sol";'
+  setup_code: |
+    token0 = new TestERC20(1e27);
+    token1 = new TestERC20(1e27);
+    _targetContract = new PoolManager(address(this));
+
+    // Ensure correct currency order for PoolKey
+    Currency c0 = Currency.wrap(address(token0));
+    Currency c1 = Currency.wrap(address(token1));
+    if (c0 > c1) (c0, c1) = (c1, c0);
+
+    key = PoolKey({ currency0: c0, currency1: c1, fee: 3000, tickSpacing: 60, hooks: IHooks(address(0))});
+    uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
+    _targetContract.initialize(key, initialSqrtPrice);
+    liquidityProvider = new PoolModifyLiquidityTest(IPoolManager(address(_targetContract)));
+    token0.approve(address(liquidityProvider), type(uint256).max);
+    token1.approve(address(liquidityProvider), type(uint256).max);
+
+    // Deal tokens to liquidityProvider AFTER initialization and BEFORE prank
+    token0.mint(address(liquidityProvider), 2e18);
+    token1.mint(address(liquidityProvider), 2e18);
+
+    vm.startPrank(address(liquidityProvider));
+    ModifyLiquidityParams memory lpParams = ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e18, salt: bytes32(0)});
+    liquidityProvider.modifyLiquidity(key, lpParams, "");
+    vm.stopPrank();
+  test_setup_code: |
+    // NonSettlingCallback 인스턴스 생성 (정의는 LLM이 생성)
+    NonSettlingCallback callback = new NonSettlingCallback(IPoolManager(address(_targetContract)), address(token0));
+    callback.setKey(key); // key는 상태 변수
+
+    // 스왑에 필요한 토큰 준비 및 전송
+    uint256 amountToSend = 1e17;
+    token0.approve(address(callback), amountToSend);
+    token0.transfer(address(callback), amountToSend);
+  action_function: null
+  action_code: |
+    // Use the callback instance created in test_setup_code
+    bytes memory callbackData = abi.encode(address(callback));
+    vm.prank(address(callback));
+    _targetContract.unlock(callbackData);
+  expected_revert_selector: "IPoolManager.CurrencyNotSettled.selector"
+  assertion_code: null
+  helper_contracts:
+    - name: "NonSettlingCallback"
+      instance_name: "callback"
+      constructor_args:
+        - "IPoolManager(address(_targetContract))"
+        - "address(token0)"
+      definition_code: |
+        contract NonSettlingCallback is IUnlockCallback {
+            IPoolManager public manager;
+            PoolKey public key;
+            address public token0;
+            constructor(IPoolManager _manager, address _token0) {
+                manager = _manager;
+                token0 = _token0;
+            }
+            function setKey(PoolKey memory _key) public { key = _key; }
+            function unlockCallback(bytes calldata) external override returns (bytes memory) {
+                SwapParams memory params = SwapParams({
+                    zeroForOne: true,
+                    amountSpecified: -1e17,
+                    sqrtPriceLimitX96: 4295128739
+                });
+                manager.swap(key, params, "");
+                return "";
+            }
+        }
+hints: {}
+prompt_ctx: {}
+patches: []
+runlog: []
+extras: {} 
