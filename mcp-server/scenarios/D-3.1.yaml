@@ -1,5 +1,5 @@
 meta:
-  id: D-3.1
+  id: D_3_1
   title: "Hook Revert DoS (BeforeSwap): beforeSwap 훅이 revert하여 swap 방해"
   category: "Denial of Service"
   severity: "medium"

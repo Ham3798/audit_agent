@@ -1,5 +1,5 @@
 meta:
-  id: R-6.1
+  id: R_6_1
   title: "UnlockCallback Reentrancy Defense: unlockCallback 중 manager.swap 재호출 시도 시 ManagerLocked 에러로 방어"
   category: "Reentrancy"
   severity: "medium"

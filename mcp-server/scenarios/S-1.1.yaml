@@ -1,5 +1,5 @@
 meta:
-  id: S-1.1
+  id: S_1_1
   title: "Invalid Hook Address Flags: 훅 주소의 권한 플래그 비트가 유효하지 않을 때 초기화 거부"
   category: "Spoofing"
   severity: "medium"

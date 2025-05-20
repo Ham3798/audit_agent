@@ -1,5 +1,5 @@
 meta:
-  id: D-3.3
+  id: D_3_3
   title: "Callback Non-Settlement DoS: unlockCallback에서 델타 발생 후 정산하지 않아 종료 시 revert"
   category: "Denial of Service"
   severity: "medium"

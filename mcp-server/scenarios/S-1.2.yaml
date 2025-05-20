@@ -1,5 +1,5 @@
 meta:
-  id: S-1.2
+  id: S_1_2
   title: "Invalid Hook for Dynamic Fee: 동적 수수료 플래그가 설정되었으나 훅 주소가 0x0일 때 초기화 거부"
   category: "Spoofing"
   severity: "medium"

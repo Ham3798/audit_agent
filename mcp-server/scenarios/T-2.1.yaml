@@ -1,5 +1,5 @@
 meta:
-  id: T-2.1
+  id: T_2_1
   title: "Hook Return Manipulation (BeforeSwap Delta): beforeSwap 훅이 스왑 방향을 뒤집는 델타 반환 시 거부"
   category: "Tampering"
   severity: "medium"
