@@ -2,31 +2,45 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual environment
-.venv/
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# Logs
+*.log
+mcp-server.log
 
-# Cloned repository for audit
-audit_repo/
+# Database
+*.db
+scenario_dyn.db
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# IDE / Editor specific files (optional)
+# IDE
 .idea/
 .vscode/
 *.swp
-*~ 
+*.swo
 
+# Environment
 .env
+.venv
+env/
+venv/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db

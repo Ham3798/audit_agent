@@ -186,9 +186,6 @@ prompt_ctx:
     - runtime.traces.root_fn
     - runtime.traces.first_error_pc
     - code.action.code
-    - code.oracle.revert_selector
-    - code.oracle.assertion_code
-    - spec.precondition
     - spec.expected
 
   system_template: |
@@ -244,10 +241,6 @@ patches:
     reason  : ""                       # 오류 원인 또는 요청
     diff    : |                        # json-patch 또는 @@ field @@ 형태
       ""
-
-###############################################################################
-# L3-HINTS – 
-###############################################################################
 
 ###############################################################################
 # L4. RUNLOG – 실행 결과 (append-only)
