@@ -37,45 +37,10 @@ spec:
   precondition: "PoolKey의 hooks 주소가 유효하지 않은 권한 비트를 가짐 (예: 0x...FF)"
   action: "manager.initialize(key, initialSqrtPrice)"
   expected: "vm.expectRevert(Hooks.HookAddressNotValid.selector)"
-code:
-  compiler_version: ""
-  target_contract_name: "PoolManager"
-  target_contract_declaration: "PoolManager internal _targetContract;"
-  target_contract_instance_name: "_targetContract"
-  required_imports:
-    - 'import { PoolManager } from "src/PoolManager.sol";'
-    - 'import { IPoolManager } from "src/interfaces/IPoolManager.sol";'
-    - 'import { PoolKey } from "src/types/PoolKey.sol";'
-    - 'import { Currency, CurrencyLibrary } from "src/types/Currency.sol";'
-    - 'import { IHooks } from "src/interfaces/IHooks.sol";'
-    - 'import { Hooks } from "src/libraries/Hooks.sol";'
-    - 'import { TestERC20 } from "src/test/TestERC20.sol";'
-  setup_code: |
-    TestERC20 token0 = new TestERC20(1e27);
-    TestERC20 token1 = new TestERC20(1e27);
-    _targetContract = new PoolManager(address(this));
-  test_setup_code: |
-    TestERC20 token0 = new TestERC20(1e27);
-    TestERC20 token1 = new TestERC20(1e27);
-    // 실제로는 특정 권한 비트가 없는 주소를 사용해야 함
-    // 예: 모든 플래그가 설정된 주소 (유효하지 않을 가능성 높음)
-    address invalidHookAddress = address(uint160(Hooks.ALL_HOOK_MASK));
-    
-    PoolKey memory key = PoolKey({
-        currency0: Currency.wrap(address(token0)),
-        currency1: Currency.wrap(address(token1)),
-        fee: 3000,
-        tickSpacing: 60,
-        hooks: IHooks(invalidHookAddress)
-    });
-    uint160 initialSqrtPrice = 79228162514264337593543950336; // 1:1
-  action_function: "initialize"
-  action_code: "_targetContract.initialize(key, initialSqrtPrice);"
-  expected_revert_selector: "Hooks.HookAddressNotValid.selector"
-  assertion_code: null
-  helper_contracts: []
+
 hints: {}
 prompt_ctx: {}
 patches: []
 runlog: []
+test_insights: []
 extras: {} 

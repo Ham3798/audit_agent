@@ -131,4 +131,5 @@ hints: {}
 prompt_ctx: {}
 patches: []
 runlog: []
+test_insights: []
 extras: {} 

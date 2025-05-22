@@ -27,8 +27,7 @@ spec:
   assets:
     - name: "Hook"
       type: "address"
-      critical: true
-
+      
   components:
     - name: "PoolManager"
       type: "contract"
@@ -62,175 +61,19 @@ spec:
     Transaction must revert with `HookAddressNotValid` selector.
 
 ###############################################################################
-# L1. GEN_REQUIRED_EXECUTION_CONTEXT_PROMPT
-###############################################################################
-
-gen_prompt:
-  model_info:
-    name: "gpt-4o"
-    temperature: 0.2
-    seed: 1234
-
-  prompt_template: |
-    You are given a threat scenario that should be tested and possibly disproven using Foundry (Solidity) unit tests.
-
-    Your job is to generate the **required execution context** to allow this test to run, including:
-    - import statements for external modules
-    - helper contracts that need to be defined (e.g., mock hooks or dummy tokens)
-    - mock deployment logic for setUp()
-    - the target contract instance declaration
-
-    ### Threat Scenario Metadata ###
-    - ID        : {{ meta.id }}
-    - Title     : {{ meta.title }}
-    - Category  : {{ meta.category }}
-    - Severity  : {{ meta.severity }}
-    - Tags      : {{ meta.tags | join(', ') }}
-
-    ### SPEC: System Model ###
-    - Actors:
-    {% for actor in spec.actors %}
-      - {{ actor.id }} ({{ actor.role }}, trust: {{ actor.trust_level }})
-    {% endfor %}
-
-    - Assets:
-    {% for asset in spec.assets %}
-      - {{ asset.name }} (type: {{ asset.type }}, critical: {{ asset.critical }})
-    {% endfor %}
-
-    - Components:
-    {% for comp in spec.components %}
-      - {{ comp.name }} ({{ comp.type }})
-    {% endfor %}
-
-    - Trust Boundaries:
-    {% for tb in spec.trust_boundaries %}
-      - {{ tb.from }} → {{ tb.to }} (enforced by: {{ tb.enforcement }})
-    {% endfor %}
-
-    - Data Flows:
-    {% for flow in spec.data_flows %}
-      - {{ flow.source }} calls {{ flow.function }} on {{ flow.target }} with params: {{ flow.params }}
-    {% endfor %}
-
-    - Behaviors:
-    {% for behavior in spec.behaviors %}
-      - {{ behavior.actor | default(behavior.component) }} → {{ behavior.action }}
-    {% endfor %}
-
-    ### SPEC: Scenario Summary ###
-    - Precondition: {{ spec.precondition }}
-    - Action      : {{ spec.action }}
-    - Expected    : {{ spec.expected }}
-
-    ### INSTRUCTIONS ###
-    Based on the above:
-    1. Output a list of required import lines under key `required_imports`
-    2. Output a list of helper contracts (with `name` and `definition_code`)
-    3. Output a `mock_deployments_code` block as a Solidity snippet for setUp()
-    4. Output the `target_contract_declaration` and `target_instance_name` to be used
-
-    Output your result as YAML.
-
-
-###############################################################################
-# L2. CODE – 템플릿 슬롯
-###############################################################################
-code:
-  compiler_version: ""                    # "^0.8.24"
-  target_contract_name: null              # 예: "PoolManager"
-  target_contract_declaration: null       # 예: "PoolManager internal manager;"
-  target_contract_instance_name: null     # 예: "manager"
-  required_imports: []                    # import line 리스트
-  setup_code: null                        # setUp() 내부 general setup
-  test_setup_code: null                   # test-specific setup
-  action_function: null                   # 예: "initialize"
-  action_code: null                       # 실행 코드 블록
-  expected_revert_selector: null          # 예: "Hooks.HookAddressNotValid.selector"
-  assertion_code: null                    # 추가 상태검사 코드
-  helper_contracts: []                    # HelperContract 객체 리스트
-
-###############################################################################
-# L2-HINTS – 컴파일러/정적 분석/런타임 힌트
+# L2. HINTS – 컴파일러/정적 분석/런타임 힌트
 ###############################################################################
 hints:
   compiler:
     errors        : []                   # solc 에러 메시지 리스트
-    warnings      : []                   # solc 경고 메시지 리스트
-    bytecode_hash : ""                   # keccak(bytecode)
-  static:
-    slither:
-      findings:                          # Slither 결과
-        - id       : ""                  # detector ID
-          severity : ""                  # "low"/"medium"/"high"
-          location : ""                  # 함수명 또는 파일:line
+    warnings      : []                   # solc 경고 메시지 리스트 (실제로는 errors에 포함될 수 있음)
+
   runtime:
     last_run_id     : ""                 # runlog[-1].run_id
-    revert_selector : ""                 # 실제 revert selector
+    revert_info     : ""                 # 실제 Revert 메시지 (문자열 또는 첫번째 Revert 라인)
     decoded_logs    : []                 # console.log 또는 이벤트 메시지
-    traces:
-      root_fn        : ""                # 실패 발생 함수
-      first_error_pc  : 0                 # EVM PC
   gas:
     used     : 0                         # 마지막 실행 gas
-    snapshot : {}                       # label → gas
-
-###############################################################################
-# L3. PROMPT_CTX – LLM 호출용 실패 진단 컨텍스트
-###############################################################################
-prompt_ctx:
-  include:
-    - compiler.errors
-    - runtime.revert_selector
-    - runtime.decoded_logs
-    - runtime.traces.root_fn
-    - runtime.traces.first_error_pc
-    - code.action.code
-    - spec.expected
-
-  system_template: |
-    You are a smart contract test analysis agent. A scenario-based test has failed.
-
-    ### TASK ###
-    Given the context below, analyze **why the test failed**, and determine whether:
-    - (1) The test scenario is incorrectly defined
-    - (2) The code under test behaves unexpectedly (i.e., a bug or unhandled case)
-    - (3) The revert expectation/assertion is missing or incorrect
-
-    Then:
-    - Suggest a patch (e.g., add vm.expectRevert, fix the assertion)
-    - Update the `expected_revert_selector` and/or `assertion_code` as needed
-    - Comment clearly whether the test proves a real vulnerability, or a false alarm
-
-    ### SPEC ###
-    - Precondition: {{ spec.precondition }}
-    - Action      : {{ spec.action }}
-    - Expected    : {{ spec.expected }}
-
-    ### ACTION CODE ###
-    {{ code.action.code | truncate(300) }}
-
-    ### EXPECTED ORACLE ###
-    - expected_revert_selector: {{ code.oracle.revert_selector | default('None') }}
-    - assertion_code: |
-      {{ code.oracle.assertion_code | default('None') }}
-
-    ### COMPILER ERRORS ###
-    {{ hints.compiler.errors | join('; ') }}
-
-    ### RUNTIME INFO ###
-    - RevertSelector: {{ hints.runtime.revert_selector }}
-    - DecodedLog    : {{ hints.runtime.decoded_logs[0] | default('None') }}
-    - TraceRootFn   : {{ hints.runtime.traces.root_fn }}
-    - FirstErrorPC  : {{ hints.runtime.traces.first_error_pc }}
-
-    ### INSTRUCTIONS ###
-    1. Write a one-line explanation of **why the test failed**.
-    2. Suggest an updated `patch_suggestion` (in natural language or code diff).
-    3. If applicable, suggest:
-       - corrected `expected_revert_selector`
-       - corrected `assertion_code`
-
 
 ###############################################################################
 # L3. PATCHES – 코드/계획 수정 이력 (append-only)
@@ -248,17 +91,20 @@ patches:
 runlog:
   - run_id            : ""             # 고유 ID
     ts                : ""             # ISO8601
-    toolchain         : ""             # e.g. "forge 0.2.1 --ffi"
-    status            : ""             # "success"/"failure"
-    duration          : ""             # e.g. "628µs"
-    vm_seed           : 0
-    output_hash       : ""             # keccak(stdout)
-    revert_selector   : ""             # 실패 시 selector
-    gas_used          : 0
-    diagnostics:
-      counterexample:
-        calldata      : ""             # raw calldata
-      trace_root      : ""             # 실패 위치 함수
-      decoded_logs    : []             # 리스트
-    patch_suggestion  : |              # 다음 수정 제안
-      ""
+    status            : ""             # "success"/"failure"/"error"
+    diff              : ""             # 실행 내용 또는 변경 사항 요약
+    stdout            : ""             # 표준 출력 (제한된 크기)
+    stderr            : ""             # 표준 에러 (제한된 크기)
+
+###############################################################################
+# L5. TEST_INSIGHTS – LLM 기반 테스트 분석 인사이트 (append-only)
+###############################################################################
+test_insights:
+  - run_id            : ""             # 원본 테스트 실행 ID
+    ts                : ""             # ISO8601
+    precondition      : ""             # 테스트의 전제 조건
+    state_changes     : ""             # 관찰된 상태 변화
+    patterns          : ""             # 감지된 패턴
+    security_implications: ""         # 보안 영향
+    additional_info   : ""             # 추가 분석 정보 및 대안 가설
+    confidence        : 0.0            # 인사이트 신뢰도 (0.0 ~ 1.0)
