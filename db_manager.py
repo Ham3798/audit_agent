@@ -19,7 +19,6 @@ class ScenarioDoc:
     meta: Dict[str, Any] = field(default_factory=dict)
     spec: Dict[str, Any] = field(default_factory=dict)
     hints: Dict[str, Any] = field(default_factory=dict)
-    prompt_ctx: Dict[str, Any] = field(default_factory=dict)
     patches: List[Dict[str, Any]] = field(default_factory=list)
     runlog: List[Dict[str, Any]] = field(default_factory=list)
     extras: Dict[str, Any] = field(default_factory=dict)  # 미래 섹션
