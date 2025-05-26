@@ -1,3 +1,56 @@
+"""
+데이터베이스 관리 모듈 (v1.3.0)
+
+이 모듈은 스마트컨트랙트 보안 검증 시나리오의 데이터베이스 관리 기능을 제공합니다.
+
+[핵심 아키텍처 변화: 1 시나리오 = 1 PoC + n개 유닛테스트]
+- 기존: 1 시나리오 = 1 테스트 컨트랙트 구조
+- 신규: 1 시나리오 = 1 통합 PoC 코드 + n개의 개별 유닛테스트 구조
+- ScenarioDoc 클래스에 code, unit_tests 필드 추가
+- 각 유닛테스트는 독립적으로 관리되며, 실행 로그와 인사이트를 별도 추적
+
+[주요 기능]
+1. ScenarioDoc 클래스: 시나리오 전체 데이터 구조 정의
+   - meta: 시나리오 메타데이터
+   - spec: 위협 모델링 기반 시나리오 스펙
+   - code: PoC 컨트랙트 코드 및 대상 컨트랙트 정보 (새로 추가)
+   - unit_tests: n개의 유닛테스트 정의 (새로 추가)
+   - hints: 컴파일러/런타임 힌트
+   - patches: 코드 변경 이력
+   - runlog: 테스트 실행 로그 (test_name 필드 추가)
+   - test_insights: LLM 분석 인사이트 (test_name 필드 추가)
+   - test_code_snapshots: 테스트 코드 스냅샷 (기존 호환성)
+
+2. 유닛테스트 관리 메서드 (새로 추가):
+   - add_unit_test(): 새 유닛테스트 추가
+   - get_unit_test(): 특정 테스트 조회
+   - remove_unit_test(): 테스트 제거
+   - get_runlog_by_test(): 테스트별 실행 로그 조회
+   - get_insights_by_test(): 테스트별 인사이트 조회
+   - get_test_summary(): 테스트 현황 요약
+
+3. 실행 로그 및 인사이트 관리:
+   - add_run_log(): 실행 로그 추가 (test_name 매개변수 추가)
+   - add_test_insight(): 인사이트 추가 (test_name 매개변수 추가)
+   - get_cumulative_insights(): 누적 인사이트 조회
+
+4. 데이터베이스 CRUD 작업:
+   - save_scenario(): 시나리오 저장/업데이트
+   - load_scenario(): 시나리오 로드
+   - update_scenario_partial(): 부분 업데이트
+   - delete_scenario(): 시나리오 삭제
+   - list_ids(): 모든 시나리오 ID 목록
+
+[데이터베이스 구조]
+- scenario 테이블: 시나리오 전체 데이터 (JSON 형태)
+- runlog 테이블: 실행 로그 (test_name 컬럼 추가)
+
+[새로운 스키마 지원]
+- schema_1.0.yaml의 확장된 구조를 완전 지원
+- 기존 호환성을 유지하면서 새로운 필드들 추가
+- 유닛테스트 중복 이름 검증 및 관리
+"""
+
 import os, json, uuid, sqlite3, datetime, logging
 from dataclasses import dataclass, asdict, field, fields
 from typing import Any, Dict, List, Optional
@@ -18,12 +71,14 @@ class ScenarioDoc:
 
     meta: Dict[str, Any] = field(default_factory=dict)
     spec: Dict[str, Any] = field(default_factory=dict)
+    code: Dict[str, Any] = field(default_factory=dict)  # 새로 추가: PoC 코드 정보
+    unit_tests: List[Dict[str, Any]] = field(default_factory=list)  # 새로 추가: n개의 유닛테스트
     hints: Dict[str, Any] = field(default_factory=dict)
     patches: List[Dict[str, Any]] = field(default_factory=list)
     runlog: List[Dict[str, Any]] = field(default_factory=list)
     extras: Dict[str, Any] = field(default_factory=dict)  # 미래 섹션
     test_insights: List[Dict[str, Any]] = field(default_factory=list)  # 테스트 결과에서 LLM이 추출한 인사이트 저장
-    test_code_snapshots: Dict[str, str] = field(default_factory=dict) # 추가: 테스트 코드 스냅샷 저장
+    test_code_snapshots: Dict[str, str] = field(default_factory=dict) # 기존 호환성: 테스트 코드 스냅샷 저장
 
     # --- util ---------------------------------------------------------------
     @property
@@ -51,7 +106,7 @@ class ScenarioDoc:
             if fname_in_class in data:
                 processed_data[fname_in_class] = data[fname_in_class]
             else: # 클래스에 정의된 필드지만 입력 데이터에 없는 경우 기본값 사용
-                if fname_in_class in ["patches", "runlog", "test_insights"]:
+                if fname_in_class in ["patches", "runlog", "test_insights", "unit_tests"]:
                     processed_data[fname_in_class] = []
                 else:
                     processed_data[fname_in_class] = {}
@@ -65,11 +120,12 @@ class ScenarioDoc:
         
         return ScenarioDoc(**processed_data)
 
-    def add_run_log(self, run_id: str, status: str, diff: str, stdout: str = "", stderr: str = ""):
-        """시나리오에 실행 로그 추가"""
+    def add_run_log(self, run_id: str, status: str, diff: str, stdout: str = "", stderr: str = "", test_name: str = ""):
+        """시나리오에 실행 로그 추가 (test_name 필드 추가)"""
         log_entry = {
             "run_id": run_id,
             "ts": datetime.datetime.utcnow().isoformat(),
+            "test_name": test_name,  # 새로 추가: 실행된 테스트 이름
             "status": status,
             "diff": diff,
             "stdout": stdout[:4000] if stdout else "",  # 로그 크기 제한
@@ -89,7 +145,7 @@ class ScenarioDoc:
         self.patches.append(patch_entry)
         return patch_entry  # 편의를 위해 추가된 patch_entry 반환
 
-    def add_test_insight(self, run_id: str, insight: Dict[str, Any]):
+    def add_test_insight(self, run_id: str, insight: Dict[str, Any], test_name: str = ""):
         """
         LLM이 순차적 사고 과정(Sequential Thinking)을 통해 테스트 실행 결과에서 추출한 인사이트를 저장합니다.
         
@@ -109,6 +165,7 @@ class ScenarioDoc:
               - security_implications: 보안 영향 (예: "hook이 항상 revert하면 사용자는 swap 불가")
               - additional_info: 추가 정보, 대안 가설, 또는 분석 과정의 특이점
               - confidence: 인사이트의 신뢰도 (0-1 범위의 값)
+            test_name: 분석된 테스트 이름 (새로 추가)
         
         Returns:
             Dict[str, Any]: 저장된 인사이트 (타임스탬프 및 run_id 추가)
@@ -129,9 +186,10 @@ class ScenarioDoc:
                     "confidence": 0.5
                 }
         
-        # 타임스탬프 추가
+        # 타임스탬프 및 메타데이터 추가
         insight["ts"] = datetime.datetime.utcnow().isoformat()
         insight["run_id"] = run_id
+        insight["test_name"] = test_name  # 새로 추가: 테스트 이름
         
         # test_insights가 존재하지 않거나 딕셔너리인 경우 리스트로 초기화
         if not hasattr(self, 'test_insights') or not isinstance(self.test_insights, list):
@@ -179,6 +237,7 @@ class ScenarioDoc:
                     parsed_insight = {
                         "ts": datetime.datetime.utcnow().isoformat(),
                         "run_id": "unknown",
+                        "test_name": "unknown",
                         "precondition": "정보 없음",
                         "state_changes": "정보 없음",
                         "patterns": "정보 없음",
@@ -202,6 +261,100 @@ class ScenarioDoc:
             return ts
         
         return sorted(processed_insights, key=get_timestamp, reverse=True)
+
+    # === 새로 추가: 유닛테스트 관리 기능 ===
+    
+    def add_unit_test(self, test_name: str, description: str, test_code: str, expected_behavior: str = "", tags: List[str] = None):
+        """
+        시나리오에 새로운 유닛테스트 추가
+        
+        Args:
+            test_name: 테스트 함수 이름
+            description: 테스트 설명
+            test_code: 테스트 함수 코드 (Solidity)
+            expected_behavior: 예상 동작
+            tags: 테스트 태그
+        """
+        if tags is None:
+            tags = []
+            
+        # 중복 테스트 이름 확인
+        for existing_test in self.unit_tests:
+            if existing_test.get("test_name") == test_name:
+                logger.warning(f"테스트 이름 '{test_name}'이 이미 존재합니다. 업데이트합니다.")
+                existing_test.update({
+                    "description": description,
+                    "test_code": test_code,
+                    "expected_behavior": expected_behavior,
+                    "tags": tags
+                })
+                return existing_test
+        
+        # 새 테스트 추가
+        new_test = {
+            "test_name": test_name,
+            "description": description,
+            "test_code": test_code,
+            "expected_behavior": expected_behavior,
+            "tags": tags
+        }
+        self.unit_tests.append(new_test)
+        logger.info(f"새 유닛테스트 추가: {test_name}")
+        return new_test
+    
+    def get_unit_test(self, test_name: str) -> Optional[Dict[str, Any]]:
+        """특정 이름의 유닛테스트 조회"""
+        for test in self.unit_tests:
+            if test.get("test_name") == test_name:
+                return test
+        return None
+    
+    def remove_unit_test(self, test_name: str) -> bool:
+        """특정 이름의 유닛테스트 제거"""
+        for i, test in enumerate(self.unit_tests):
+            if test.get("test_name") == test_name:
+                del self.unit_tests[i]
+                logger.info(f"유닛테스트 제거: {test_name}")
+                return True
+        return False
+    
+    def get_runlog_by_test(self, test_name: str) -> List[Dict[str, Any]]:
+        """특정 테스트의 모든 실행 로그 조회"""
+        return [log for log in self.runlog if log.get("test_name") == test_name]
+    
+    def get_insights_by_test(self, test_name: str) -> List[Dict[str, Any]]:
+        """특정 테스트의 모든 인사이트 조회"""
+        return [insight for insight in self.test_insights if insight.get("test_name") == test_name]
+    
+    def get_test_summary(self) -> Dict[str, Any]:
+        """시나리오의 테스트 현황 요약"""
+        total_tests = len(self.unit_tests)
+        total_runs = len(self.runlog)
+        successful_runs = len([log for log in self.runlog if log.get("status") == "SUCCESS"])
+        total_insights = len(self.test_insights)
+        
+        # 테스트별 통계
+        test_stats = {}
+        for test in self.unit_tests:
+            test_name = test.get("test_name", "")
+            test_runs = self.get_runlog_by_test(test_name)
+            test_insights = self.get_insights_by_test(test_name)
+            
+            test_stats[test_name] = {
+                "total_runs": len(test_runs),
+                "successful_runs": len([log for log in test_runs if log.get("status") == "SUCCESS"]),
+                "insights_count": len(test_insights),
+                "last_run": test_runs[-1] if test_runs else None
+            }
+        
+        return {
+            "total_tests": total_tests,
+            "total_runs": total_runs,
+            "successful_runs": successful_runs,
+            "success_rate": successful_runs / total_runs if total_runs > 0 else 0,
+            "total_insights": total_insights,
+            "test_stats": test_stats
+        }
 
     def update_hints_from_run(self, run_id: str, status: str, stdout: str, stderr: str):
         """실행 결과를 바탕으로 hints 업데이트"""
@@ -228,7 +381,7 @@ def init_db():
                      (id TEXT PRIMARY KEY, json TEXT NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS runlog
                      (run_id TEXT PRIMARY KEY, scenario_id TEXT, ts TEXT,
-                      status TEXT, diff TEXT, stdout TEXT, stderr TEXT)""")
+                      test_name TEXT, status TEXT, diff TEXT, stdout TEXT, stderr TEXT)""")
     logger.info(f"DB 초기화 완료: {_DB}")
 
 # 초기화 실행
@@ -314,24 +467,25 @@ def list_ids() -> List[str]:
         return []
 
 def add_runlog_entry(sid: str, status: str, diff: str,
-            stdout: str = "", stderr: str = "") -> str:
-    """실행 로그 추가 (DB + 시나리오 문서)"""
+            stdout: str = "", stderr: str = "", test_name: str = "") -> str:
+    """실행 로그 추가 (DB + 시나리오 문서) - test_name 필드 추가"""
     run_id = str(uuid.uuid4())
     try:
         # 1. DB의 runlog 테이블에 추가
         with _conn() as c:
-            c.execute("""INSERT INTO runlog VALUES (?,?,?,?,?,?,?)""",
+            c.execute("""INSERT INTO runlog VALUES (?,?,?,?,?,?,?,?)""",
                       (run_id, sid,
                        datetime.datetime.utcnow().isoformat(),
+                       test_name,  # 새로 추가
                        status, diff, stdout[:8000], stderr[:8000]))
         
         # 2. 시나리오 문서에도 로그 추가
         doc = load_scenario(sid)
         if doc:
-            doc.add_run_log(run_id, status, diff, stdout, stderr)
+            doc.add_run_log(run_id, status, diff, stdout, stderr, test_name)
             save_scenario(doc)
         
-        logger.info(f"실행 로그 추가 완료: sid={sid}, run_id={run_id}, status={status}")
+        logger.info(f"실행 로그 추가 완료: sid={sid}, run_id={run_id}, test_name={test_name}, status={status}")
         return run_id
     except Exception as e:
         logger.error(f"실행 로그 추가 중 오류: sid={sid}, {e}")

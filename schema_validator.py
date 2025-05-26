@@ -1,8 +1,53 @@
 """
-스키마 검증 모듈
+스키마 검증 모듈 (v1.3.0)
 
 이 모듈은 시나리오가 정의된 스키마에 맞게 구성되었는지 검증하는 기능을 제공합니다.
 버전별 스키마 검증을 지원하며, 새로운 스키마 버전이 추가되어도 유연하게 대응할 수 있습니다.
+
+[핵심 아키텍처 변화: 1 시나리오 = 1 PoC + n개 유닛테스트]
+- 기존: 1 시나리오 = 1 테스트 컨트랙트 구조 검증
+- 신규: 1 시나리오 = 1 통합 PoC 코드 + n개의 개별 유닛테스트 구조 검증
+- schema_1.0.yaml의 확장된 구조를 완전 지원
+
+[새로운 검증 기능]
+1. code 섹션 검증 (새로 추가):
+   - poc_contract: PoC 컨트랙트 코드 검증
+   - target_contract_name: 대상 컨트랙트 이름 검증
+   - deployment_script: 배포 스크립트 검증 (선택적)
+
+2. unit_tests 섹션 검증 (새로 추가):
+   - test_name: 테스트 함수 이름 검증 (고유성 포함)
+   - description: 테스트 설명 검증
+   - test_code: 테스트 함수 코드 검증
+   - expected_behavior: 예상 동작 검증
+   - tags: 테스트 태그 검증
+
+3. 확장된 runlog 검증:
+   - test_name 필드 추가 검증
+   - unit_tests와의 일치성 검증
+
+4. 확장된 test_insights 검증:
+   - test_name 필드 추가 검증
+   - unit_tests와의 일치성 검증
+
+[주요 클래스 및 메서드]
+- SchemaValidator: 메인 검증 클래스
+  - validate(): 시나리오 전체 검증
+  - _validate_v1_0(): schema_1.0.yaml 버전별 검증
+  - extract_hints_from_results(): 테스트 결과에서 힌트 추출
+
+[검증 규칙]
+- 필수 섹션: meta, spec, code, unit_tests, hints, patches, runlog, test_insights
+- 타입 검증: 각 필드의 예상 타입 확인
+- 일치성 검증: runlog/test_insights의 test_name과 unit_tests 간 일치성
+- 중복 검증: unit_tests 내 test_name 중복 방지
+- 날짜 형식 검증: ISO8601 형식 확인
+- 신뢰도 검증: test_insights의 confidence 값 범위 확인 (0.0-1.0)
+
+[기존 호환성]
+- 기존 스키마 구조와 완전 호환
+- 새로운 필드들은 선택적으로 처리
+- 기존 시나리오 데이터의 마이그레이션 지원
 """
 
 import yaml
@@ -148,13 +193,13 @@ class SchemaValidator:
         warnings = []
         schema_version = schema_data.get("schema_version", "scenario-schema-1.0")
         
-        # 최상위 필수 섹션 검증
-        required_top_level_sections = ["meta", "spec", "hints", "patches", "runlog", "test_insights"]
+        # 최상위 필수 섹션 검증 (code, unit_tests 추가)
+        required_top_level_sections = ["meta", "spec", "code", "unit_tests", "hints", "patches", "runlog", "test_insights"]
         for section in required_top_level_sections:
             if section not in scenario:
                 errors.append(f"필수 최상위 섹션 '{section}'이(가) 없습니다.")
-            elif not isinstance(scenario[section], (dict if section not in ["patches", "runlog", "test_insights"] else list)):
-                expected_type = "객체(object)" if section not in ["patches", "runlog", "test_insights"] else "배열(list)"
+            elif not isinstance(scenario[section], (dict if section not in ["unit_tests", "patches", "runlog", "test_insights"] else list)):
+                expected_type = "객체(object)" if section not in ["unit_tests", "patches", "runlog", "test_insights"] else "배열(list)"
                 errors.append(f"섹션 '{section}'의 타입이 올바르지 않습니다. (예상: {expected_type}, 실제: {type(scenario[section]).__name__})")
 
         # 1. meta 섹션 검증
@@ -232,7 +277,52 @@ class SchemaValidator:
         elif "spec" in scenario:
             errors.append("'spec' 섹션은 객체(object)여야 합니다.")
 
-        # 3. hints 섹션 검증
+        # 3. code 섹션 검증 (새로 추가)
+        if "code" in scenario and isinstance(scenario["code"], dict):
+            code = scenario["code"]
+            
+            # 선택적 필드 타입 검증
+            if "poc_contract" in code and not isinstance(code["poc_contract"], str):
+                errors.append("'code.poc_contract'는 문자열이어야 합니다.")
+            
+            if "target_contract_name" in code and not isinstance(code["target_contract_name"], str):
+                errors.append("'code.target_contract_name'는 문자열이어야 합니다.")
+            
+            if "deployment_script" in code and not isinstance(code["deployment_script"], str):
+                errors.append("'code.deployment_script'는 문자열이어야 합니다.")
+        elif "code" in scenario:
+            errors.append("'code' 섹션은 객체(object)여야 합니다.")
+
+        # 4. unit_tests 섹션 검증 (새로 추가)
+        if "unit_tests" in scenario and isinstance(scenario["unit_tests"], list):
+            unit_tests = scenario["unit_tests"]
+            for i, test in enumerate(unit_tests):
+                if not isinstance(test, dict):
+                    errors.append(f"'unit_tests[{i}]'는 객체(object)여야 합니다.")
+                    continue
+                
+                # 필수 필드 검증
+                required_fields = ["test_name", "description", "test_code", "expected_behavior"]
+                for required_field in required_fields:
+                    if required_field not in test:
+                        errors.append(f"'unit_tests[{i}]'에 필수 필드 '{required_field}'이(가) 없습니다.")
+                    elif not isinstance(test[required_field], str):
+                        errors.append(f"'unit_tests[{i}].{required_field}'는 문자열이어야 합니다.")
+                
+                # tags 필드 검증
+                if "tags" in test and not isinstance(test["tags"], list):
+                    errors.append(f"'unit_tests[{i}].tags'는 배열(list)이어야 합니다.")
+                
+                # test_name 중복 검증
+                test_name = test.get("test_name", "")
+                if test_name:
+                    for j, other_test in enumerate(unit_tests):
+                        if i != j and other_test.get("test_name") == test_name:
+                            errors.append(f"'unit_tests[{i}].test_name' '{test_name}'이(가) 중복됩니다. (unit_tests[{j}]와 중복)")
+        elif "unit_tests" in scenario:
+            errors.append("'unit_tests' 섹션은 배열(list)이어야 합니다.")
+
+        # 5. hints 섹션 검증
         if "hints" in scenario and isinstance(scenario["hints"], dict):
             hints = scenario["hints"]
             
@@ -269,7 +359,7 @@ class SchemaValidator:
         elif "hints" in scenario:
             errors.append("'hints' 섹션은 객체(object)여야 합니다.")
 
-        # 4. patches 섹션 검증
+        # 6. patches 섹션 검증
         if "patches" in scenario and isinstance(scenario["patches"], list):
             patches = scenario["patches"]
             for i, patch in enumerate(patches):
@@ -291,7 +381,7 @@ class SchemaValidator:
         elif "patches" in scenario:
             errors.append("'patches' 섹션은 배열(list)이어야 합니다.")
 
-        # 5. runlog 섹션 검증
+        # 7. runlog 섹션 검증 (test_name 필드 추가)
         if "runlog" in scenario and isinstance(scenario["runlog"], list):
             runlog = scenario["runlog"]
             for i, log in enumerate(runlog):
@@ -299,8 +389,8 @@ class SchemaValidator:
                     errors.append(f"'runlog[{i}]'는 객체(object)여야 합니다.")
                     continue
                 
-                # 필수 필드 검증
-                for required_field in ["run_id", "ts", "status", "diff"]:
+                # 필수 필드 검증 (test_name 추가)
+                for required_field in ["run_id", "ts", "test_name", "status", "diff"]:
                     if required_field not in log:
                         errors.append(f"'runlog[{i}]'에 필수 필드 '{required_field}'이(가) 없습니다.")
                 
@@ -314,10 +404,17 @@ class SchemaValidator:
                 # status 값 검증
                 if "status" in log and log["status"] not in ["success", "failure", "error", "SUCCESS", "TEST_FAILURE", "ERROR"]:
                     warnings.append(f"'runlog[{i}].status'의 값이 표준 상태값이 아닙니다: {log['status']}")
+                
+                # test_name과 unit_tests의 일치성 검증
+                if "test_name" in log and log["test_name"] and "unit_tests" in scenario:
+                    test_name = log["test_name"]
+                    unit_test_names = [test.get("test_name", "") for test in scenario["unit_tests"] if isinstance(test, dict)]
+                    if test_name not in unit_test_names and test_name != "":
+                        warnings.append(f"'runlog[{i}].test_name' '{test_name}'이(가) unit_tests에 정의되지 않았습니다.")
         elif "runlog" in scenario:
             errors.append("'runlog' 섹션은 배열(list)이어야 합니다.")
 
-        # 6. test_insights 섹션 검증
+        # 8. test_insights 섹션 검증 (test_name 필드 추가)
         if "test_insights" in scenario and isinstance(scenario["test_insights"], list):
             insights = scenario["test_insights"]
             for i, insight in enumerate(insights):
@@ -325,8 +422,8 @@ class SchemaValidator:
                     errors.append(f"'test_insights[{i}]'는 객체(object)여야 합니다.")
                     continue
                 
-                # 필수 필드 검증
-                required_fields = ["run_id", "ts", "precondition", "state_changes", "patterns", "security_implications", "additional_info", "confidence"]
+                # 필수 필드 검증 (test_name 추가)
+                required_fields = ["run_id", "ts", "test_name", "precondition", "state_changes", "patterns", "security_implications", "additional_info", "confidence"]
                 for required_field in required_fields:
                     if required_field not in insight:
                         errors.append(f"'test_insights[{i}]'에 필수 필드 '{required_field}'이(가) 없습니다.")
@@ -350,6 +447,13 @@ class SchemaValidator:
                     
                     if confidence < 0.0 or confidence > 1.0:
                         errors.append(f"'test_insights[{i}].confidence'는 0.0과 1.0 사이의 값이어야 합니다.")
+                
+                # test_name과 unit_tests의 일치성 검증
+                if "test_name" in insight and insight["test_name"] and "unit_tests" in scenario:
+                    test_name = insight["test_name"]
+                    unit_test_names = [test.get("test_name", "") for test in scenario["unit_tests"] if isinstance(test, dict)]
+                    if test_name not in unit_test_names and test_name != "":
+                        warnings.append(f"'test_insights[{i}].test_name' '{test_name}'이(가) unit_tests에 정의되지 않았습니다.")
         elif "test_insights" in scenario:
             errors.append("'test_insights' 섹션은 배열(list)이어야 합니다.")
 

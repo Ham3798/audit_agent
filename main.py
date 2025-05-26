@@ -1,74 +1,148 @@
 ################################################################################
-# MCP 서버
-# v1.2.0 (2025-0-23)
-# 최종 업데이트: 순차적 검증 프로세스 및 테스트 우선 접근법 완성
-################################################################################
+# 🎯 **LLM 기반 스마트컨트랙트 PoC 개발 전용 MCP 서버**
 #
-# 이 MCP 서버는 스마트컨트랙트 보안 검증 자동화의 핵심 백엔드입니다.
+# 이 MCP 서버는 LLM이 스마트컨트랙트 보안 취약점의 PoC(Proof of Concept) 코드를 
+# 체계적으로 개발하고 검증할 수 있도록 설계된 전문 백엔드입니다.
 #
-# [역할 및 구조]
-# - MCP는 '테스트 우선' 접근 방식을 지원하여, 기존 시나리오가 없어도 최초 유닛테스트부터
-#   시작하여 보안 검증을 수행할 수 있습니다.
-# - 최초 유닛테스트 검증 후 LLM이 분석하여 생성한 메타데이터와 스펙을 
-#   register_scenario로 등록하는 흐름을 주로 지원합니다.
-# - 모든 "추론"(시나리오 생성/수정/피드백/코드 diff 해석 등)은 LLM(상위 계층)이 담당하며,
-#   MCP는 LLM이 넘겨준 dict(시나리오, 변경사항 등)를 그대로 DB에 저장/업데이트/로깅만 합니다.
-# - MCP는 입력값의 의미 해석, 적합성 판단, 자동 보정/생성 등은 일절 하지 않습니다.
+# [핵심 PoC 개발 아키텍처: 1 시나리오 = 1 통합 PoC + n개 검증 테스트]
+# - LLM이 취약점을 발견하면 → 시나리오로 등록 → 다양한 테스트 케이스 작성 → 통합 PoC 생성
+# - 각 유닛테스트는 취약점의 다른 측면을 검증 (기본 공격, 엣지 케이스, 방어 우회 등)
+# - 모든 테스트 결과를 종합하여 완성도 높은 최종 PoC 코드 자동 생성
+# - 실행 결과와 인사이트를 누적하여 PoC의 신뢰성과 완성도 지속적 향상
 #
-# [주요 툴 및 사용 흐름]
+# [LLM을 위한 PoC 개발 가이드라인]
+# 1. **시나리오 중심 접근**: 취약점 발견 → register_scenario로 체계화
+# 2. **점진적 테스트 확장**: add_unit_test로 다양한 공격 벡터 검증
+# 3. **실행 기반 검증**: execute_unit_test로 실제 동작 확인
+# 4. **인사이트 누적**: analyze_test_results로 발견사항 구조화
+# 5. **자동 PoC 생성**: generate_poc_from_tests로 최종 통합 코드 생성
+# 6. **자율적 개선**: llm_autonomous_verification_cycle로 완성도 향상
 #
-# 1. scenario_context(sid, test_contract_name, foundry_root_path)
-#    - 순차적 검증 프로세스의 1단계: 시나리오 컨텍스트 이해
-#    - 기존에 등록된 시나리오의 전체 정보를 로드하여 분석 준비
+# [MCP의 역할: LLM의 PoC 개발 파트너]
+# - LLM은 창의적 사고와 코드 생성을 담당
+# - MCP는 체계적 관리와 실행 환경을 제공
+# - 모든 "추론"과 "판단"은 LLM이 수행
+# - MCP는 LLM의 결정사항을 정확히 저장/실행/추적만 담당
 #
-# 2. execute_single_unit_test(sid, test_contract_name, foundry_root_path)
-#    - 순차적 검증 프로세스의 2단계: 테스트 실행 및 기초 데이터 수집
-#    - 기존에 등록된 시나리오가 있는 경우에만 이 방식으로 테스트 실행
-#    - 시나리오가 없으면 에러 반환(추가 시나리오를 먼저 등록해야 함)
-#    - 테스트 파일 변경 감지 및 패치 로그 자동 생성 포함
+# [주요 PoC 개발 도구 및 사용 시점]
 #
-# 3. get_single_unit_test_log(sid, run_id)
-#    - 순차적 검증 프로세스의 3단계: 상세 실행 결과 조회 및 초기 관찰
-#    - 특정 실행 ID의 상세 로그 조회
+# === 🚀 PoC 개발 시작 단계 ===
+# 1. register_scenario(scenario_dict)
+#    ✅ 사용 시점: 새로운 취약점을 발견했을 때
+#    🎯 목적: 취약점을 체계적으로 문서화하고 PoC 개발 기반 마련
+#    💡 LLM 가이드: schema_1.0.yaml 구조에 맞게 메타데이터, 스펙, 초기 코드 정보 제공
 #
-# 4. analyze_test_results(sid, run_id, insights: Dict[str, Any])
-#    - 순차적 검증 프로세스의 4단계: 심층 분석 및 인사이트 도출
-#    - LLM이 순차적 사고 과정을 통해 도출한 인사이트를 구조화하여 저장
+# 2. scenario_context(sid, test_contract_name, foundry_root_path)
+#    ✅ 사용 시점: 기존 시나리오의 PoC 개발을 계속할 때
+#    🎯 목적: 현재까지의 모든 개발 컨텍스트 로드 (코드, 테스트, 인사이트 등)
+#    💡 LLM 가이드: 반환된 정보로 현재 PoC 상태를 파악하고 다음 단계 계획
 #
-# 5. get_cumulative_insights(sid)
-#    - 순차적 검증 프로세스의 5단계: 누적 인사이트 메타 분석
-#    - 모든 누적된 인사이트를 조회하여 메타 분석 지원
+# === 🧪 테스트 케이스 개발 단계 ===
+# 3. add_unit_test(sid, test_name, description, test_code, expected_behavior, tags)
+#    ✅ 사용 시점: 새로운 공격 벡터나 테스트 시나리오를 추가할 때
+#    🎯 목적: 취약점의 다양한 측면을 검증하는 개별 테스트 케이스 생성
+#    💡 LLM 가이드: 기본 공격, 엣지 케이스, 방어 우회, 상태 조작 등 다각도 검증
 #
-# 6. register_scenario(scenario: dict)
-#    - 테스트 우선 접근법의 핵심: 유닛테스트 분석 후 LLM이 schema_1.0.yaml 구조에 맞게 추론한 시나리오를 등록
-#    - meta, spec, code 등 모든 필드를 LLM이 완성해야 하며, MCP는 단순 저장만 함
+# 4. get_unit_tests(sid)
+#    ✅ 사용 시점: 현재 등록된 테스트들을 확인하고 싶을 때
+#    🎯 목적: 테스트 커버리지 파악 및 누락된 시나리오 식별
+#    💡 LLM 가이드: 반환된 목록으로 추가 필요한 테스트 케이스 계획
 #
-# 7. update_scenario(sid: str, update_dict: dict)
-#    - 선택적 최종 단계: LLM이 추론한 시나리오 변경사항(피드백 등)을 입력받아 해당 시나리오를 업데이트
-#    - MCP는 단순히 DB에 반영만 하며, 의미 해석/적합성 판단은 하지 않음
-#    - meta, spec 필드는 수정 불가, hints/patches/runlog/test_insights 등만 수정 가능
+# === ⚡ 실행 및 검증 단계 ===
+# 5. execute_unit_test(sid, test_name, foundry_root_path)
+#    ✅ 사용 시점: 특정 테스트의 동작을 확인하고 싶을 때
+#    🎯 목적: 개별 공격 시나리오의 실제 동작 검증
+#    💡 LLM 가이드: 실패 시 코드 수정, 성공 시 다음 테스트로 진행
 #
-# [테스트 파일 변경 감지]
-# - execute_single_unit_test 함수 내부에서 자동으로 테스트 파일 변경을 감지합니다.
-# - 이전 스냅샷과 현재 파일을 비교하여 diff를 생성하고 patches 필드에 자동 기록합니다.
-# - MCP는 변경(diff) 자체만 기록하며, 변경의 의미 해석/정합성 판단/추론은 하지 않습니다.
-# - 변경된 diff의 의미 해석, 시나리오와의 정합성 판단, 추가 피드백 등은 반드시 LLM(상위 계층)이 담당해야 합니다.
+# 6. execute_all_unit_tests(sid, foundry_root_path)
+#    ✅ 사용 시점: 모든 테스트의 전체적인 성공률을 확인할 때
+#    🎯 목적: PoC의 전반적인 완성도와 안정성 평가
+#    💡 LLM 가이드: 성공률이 낮으면 문제 있는 테스트들 개별 분석 필요
 #
-# [순차적 사고 과정을 통한 분석 프로세스]
-# 1. 초기 관찰 단계: 테스트 로그를 검토하고 기본적인 패턴 식별
-# 2. 심층 분석 단계: 실행 흐름, 상태 변화, 조건부 행동 분석
-# 3. 가설 형성 단계: 시스템 동작 및 보안 영향에 대한 가설 수립
-# 4. 가설 검증 단계: 데이터를 재검토하여 가설 검증 및 대안 고려
-# 5. 인사이트 도출 단계: 검증된 발견 사항을 구조화된 형태로 정리
+# === 📊 분석 및 인사이트 단계 ===
+# 7. get_test_logs(sid, test_name)
+#    ✅ 사용 시점: 테스트 실행 결과의 상세 정보가 필요할 때
+#    🎯 목적: 실행 로그 분석을 통한 문제점 진단 및 개선점 도출
+#    💡 LLM 가이드: stdout/stderr 분석으로 실패 원인 파악 또는 성공 패턴 이해
+#
+# 8. analyze_test_results_by_test(sid, test_name, run_id, insights)
+#    ✅ 사용 시점: 테스트 결과를 분석하여 의미 있는 발견사항을 기록할 때
+#    🎯 목적: 실행 결과에서 도출한 보안 인사이트를 구조화하여 저장
+#    💡 LLM 가이드: precondition, state_changes, patterns, security_implications 등 체계적 분석
+#
+# 9. get_test_insights(sid, test_name)
+#    ✅ 사용 시점: 누적된 인사이트를 바탕으로 PoC 개선 방향을 결정할 때
+#    🎯 목적: 지금까지 발견한 모든 보안 인사이트 종합 검토
+#    💡 LLM 가이드: 패턴 분석으로 추가 공격 벡터 발견 또는 PoC 완성도 평가
+#
+# === 🎯 최종 PoC 생성 단계 ===
+# 10. generate_poc_from_tests(sid)
+#     ✅ 사용 시점: 모든 테스트가 완료되어 최종 통합 PoC를 생성할 때
+#     🎯 목적: 개별 테스트들을 결합한 완성된 PoC 코드 자동 생성
+#     💡 LLM 가이드: 생성된 PoC 검토 후 필요시 추가 테스트나 수정 진행
+#
+# === 🤖 자율적 개선 단계 ===
+# 11. llm_assess_verification_needs(sid)
+#     ✅ 사용 시점: 현재 PoC의 완성도를 자체 평가하고 싶을 때
+#     🎯 목적: LLM이 스스로 부족한 부분을 진단하고 개선 계획 수립
+#     💡 LLM 가이드: 반환된 분석 질문들에 답하며 추가 필요 작업 식별
+#
+# 12. llm_generate_test_improvement(sid, improvement_plan, foundry_root_path)
+#     ✅ 사용 시점: 분석 결과를 바탕으로 실제 코드 개선을 적용할 때
+#     🎯 목적: LLM이 설계한 개선사항을 실제 테스트 코드에 반영
+#     💡 LLM 가이드: JSON 형태로 새로운 테스트 함수와 개선 이유 제공
+#
+# 13. llm_autonomous_verification_cycle(sid, foundry_root_path)
+#     ✅ 사용 시점: 완전 자율적으로 PoC 완성도를 높이고 싶을 때
+#     🎯 목적: LLM이 스스로 분석→개선→실행→평가 사이클 수행
+#     💡 LLM 가이드: 제공된 지침에 따라 단계별로 자율적 개선 진행
+#
+# === 📋 관리 및 유틸리티 도구 ===
+# 14. get_scenario(sid) / list_scenarios() / update_scenario(sid, update_dict)
+#     ✅ 사용 시점: 시나리오 정보 조회, 목록 확인, 메타데이터 업데이트 시
+#     🎯 목적: PoC 개발 과정에서 필요한 기본적인 시나리오 관리
+#
+# [LLM을 위한 PoC 개발 성공 전략]
+# 🎯 **단계적 접근**: 간단한 기본 공격부터 시작하여 점진적으로 복잡한 시나리오 추가
+# 🔄 **반복적 개선**: 테스트 실행 → 결과 분석 → 코드 개선 → 재실행 사이클 반복
+# 📊 **데이터 기반 판단**: 실행 로그와 인사이트를 바탕으로 객관적 개선 방향 결정
+# 🤖 **자율적 완성도 관리**: 정기적으로 자체 평가하여 누락된 부분 보완
+# 🎨 **창의적 테스트 설계**: 일반적인 공격뿐만 아니라 독창적인 공격 벡터도 탐색
+#
+# [새로운 스키마 구조 (schema_1.0.yaml)]
+# - code: PoC 컨트랙트 코드 및 대상 컨트랙트 정보
+#   * poc_contract: 통합 PoC 컨트랙트 코드 (Solidity)
+#   * target_contract_name: 대상 컨트랙트 이름
+#   * deployment_script: 배포 스크립트 (선택적)
+#
+# - unit_tests: n개의 유닛테스트 정의 (배열)
+#   * test_name: 테스트 함수 이름 (고유)
+#   * description: 테스트 설명
+#   * test_code: 테스트 함수 코드 (Solidity)
+#   * expected_behavior: 예상 동작
+#   * tags: 테스트 태그 (예: ["attack", "reentrancy", "poc"])
+#
+# - runlog: 실행 로그에 test_name 필드 추가
+#   * test_name: 실행된 테스트 이름 (unit_tests의 test_name과 매칭)
+#
+# - test_insights: 인사이트에 test_name 필드 추가
+#   * test_name: 분석된 테스트 이름
+#
+# [자동 파일 변경 감지 및 PoC 진화 추적]
+# - 모든 테스트 실행 시 자동으로 파일 변경 감지
+# - 코드 수정 이력을 patches 필드에 자동 기록
+# - LLM의 PoC 개발 과정을 완전히 추적하여 개발 히스토리 보존
+# - 변경 사항의 의미 해석과 다음 단계 결정은 LLM이 담당
 #
 # [모듈 구조]
-# - main.py: MCP 서버의 주요 도구와 API 엔드포인트 제공
-# - db_manager.py: 데이터베이스 관련 기능 (ScenarioDoc 클래스, CRUD 작업)
-# - schema_validator.py: 스키마 검증 및 힌트 추출 기능
-# - file_monitor.py: 파일 변경 감지 및 추적 기능
+# - main.py: MCP 서버의 PoC 개발 도구와 API 엔드포인트 제공
+# - db_manager.py: 시나리오, 테스트, 인사이트 데이터 관리
+# - schema_validator.py: PoC 시나리오 스키마 검증 및 힌트 추출
+# - file_monitor.py: 테스트 파일 변경 감지 및 PoC 진화 추적
 #
 # [참고]
-# - 각 필드/입력 구조/예시는 schema_1.0.yaml 및 실제 시나리오 예시(D-3.1.yaml 등) 참고
+# - 각 필드/입력 구조/예시는 schema_1.0.yaml 및 실제 시나리오 예시 참고
+# - PoC 개발에 최적화된 아키텍처로 LLM의 창의적 보안 연구 지원
 #
 ################################################################################
 
@@ -273,7 +347,7 @@ async def scenario_context(sid: str, test_contract_name: str, foundry_root_path:
         return {}
 
 @mcp.tool()
-async def execute_single_unit_test(sid: str, test_contract_name: str, foundry_root_path: str):
+async def execute_single_unit_test(sid: str, test_contract_name: str, foundry_root_path: str, test_name: str = "") -> dict:
     """
     [MCP 시스템 컨텍스트]
     [순차적 검증 프로세스: 2단계 - 테스트 실행 및 기초 데이터 수집]
@@ -319,12 +393,15 @@ async def execute_single_unit_test(sid: str, test_contract_name: str, foundry_ro
         3. test/{sid}.t.sol (sid와 contract name이 다를 경우)
       * 파일을 찾지 못해도 테스트 실행은 계속 진행됩니다
     - foundry_root_path: foundry 프로젝트 디렉토리 경로 (예: /foundry_project)
+    - test_name: 특정 테스트 함수 이름 (새로 추가, 선택적)
+      * 지정하면 해당 테스트만 실행, 비어있으면 전체 테스트 실행
     
     [반환 값]
     - success: 테스트 성공 여부
     - stdout: 테스트 표준 출력
     - stderr: 테스트 표준 에러
     - run_id: 실행 ID (다음 단계에서 사용)
+    - test_name: 실행된 테스트 이름 (지정된 경우)
     + execution_context: 실행 컨텍스트 정보 (에러 패턴, 가스 정보, 이벤트, 상태 변화)
     + exploration_status: 탐색 상태 정보 (테스트 수, 커버리지 영역, 패턴)
     
@@ -345,7 +422,7 @@ async def execute_single_unit_test(sid: str, test_contract_name: str, foundry_ro
     이 정보들을 통해 LLM은 테스트가 성공했어도 보안 검증이 충분하지 않을 경우
     능동적으로 추가 테스트 케이스를 생성하고 재실행하는 사이클을 시작할 수 있습니다.
     """
-    logger.info(f"[execute_single_unit_test] 호출: sid={sid}, test_contract_name={test_contract_name}")
+    logger.info(f"[execute_single_unit_test] 호출: sid={sid}, test_contract_name={test_contract_name}, test_name={test_name}")
     doc = load_scenario(sid)
     if not doc:
         error_msg = f"시나리오 {sid}가 DB에 존재하지 않습니다. 먼저 시나리오를 등록하세요."
@@ -384,9 +461,9 @@ async def execute_single_unit_test(sid: str, test_contract_name: str, foundry_ro
         
         # 1.1. 테스트 파일이 존재할 경우 변경 감지 수행
         if test_file_full_path and os.path.exists(test_file_full_path):
-            # 1.2. 테스트 파일 모니터링 등록
-            file_monitor.register_file(sid, test_file_full_path)
-            logger.info(f"테스트 파일 모니터링 등록: {test_file_full_path}")
+            # 1.2. 테스트 파일 모니터링 등록 (test_name 포함)
+            file_monitor.register_file(sid, test_file_full_path, test_name)
+            logger.info(f"테스트 파일 모니터링 등록: {test_file_full_path}, test_name={test_name}")
             
             # 1.3. 테스트 코드 변경 감지
             with open(test_file_full_path, "r", encoding="utf-8") as f:
@@ -496,52 +573,67 @@ async def get_unit_test_logs(sid: str) -> list:
 @mcp.tool()
 def register_scenario(scenario: dict) -> dict:
     """
-    [MCP 시스템 컨텍스트]
-    [테스트 우선 접근법을 위한 핵심 도구]
+    🚀 **PoC 개발 시작점: 새로운 취약점 시나리오 등록**
     
-    최초 유닛테스트를 분석한 후 LLM이 생성한 시나리오를 등록하는 도구입니다.
-    이는 테스트 우선 워크플로우의 핵심 단계로, 유닛테스트 분석을 시나리오화하여 
-    이후 체계적인 검증이 가능하게 합니다.
+    LLM이 새로운 보안 취약점을 발견했을 때, 이를 체계적인 PoC 개발 프로젝트로 
+    전환하기 위한 핵심 도구입니다. 이 단계에서 취약점의 모든 메타데이터와 
+    초기 분석 결과를 구조화하여 저장합니다.
     
-    - LLM은 테스트 코드와 실행 결과를 분석하여 schema_1.0.yaml의 구조(meta, spec, code, hints 등)에 
-      맞는 시나리오 dict를 생성해야 합니다.
-    - MCP는 입력값을 그대로 DB에 등록만 하며, 자동 추론/보정은 하지 않습니다.
-    - meta.id는 반드시 고유해야 하며, 이미 등록된 id는 에러가 발생합니다.
-    - [중요] meta.id(sid)는 테스트 컨트랙트 파일 이름과 일치해야 합니다. 컨트랙트 이름이 "ExampleContract"라면
-      시나리오 ID도 "ExampleContract"로 지정해야 합니다. 이는 파일 변경 감지와 시나리오 매핑을 위해 필수적입니다.
-    - 모든 필드는 schema_1.0.yaml의 타입/예시를 참고하여 생성해야 합니다.
-    - 값이 없는 경우에도 빈 값(""), [], {{}} 등으로 명시해야 합니다.
+    🎯 **PoC 개발에서의 역할**:
+    - 취약점 발견 → 체계적 PoC 프로젝트 시작
+    - 무작정 코딩하지 않고 먼저 취약점의 본질을 문서화
+    - 이후 모든 테스트 케이스와 PoC 코드의 기준점 역할
+    - 팀 협업이나 감사 보고서 작성 시 참조 자료로 활용
     
-    [테스트 우선 워크플로우에서의 위치]
-    1. 최초 유닛테스트 실행 및 분석 완료
-    2. ➡️ 현재 단계: 시나리오 등록
-    3. 이후 execute_single_unit_test 등으로 체계적 검증 진행
+    💡 **LLM 사용 가이드**:
+    1. **메타데이터 완성**: id, title, category, severity 등 기본 정보
+    2. **스펙 정의**: 공격 시나리오, 관련 액터, 자산, 신뢰 경계 등
+    3. **초기 코드 구조**: 대상 컨트랙트 정보, 기본 PoC 틀
+    4. **태그 활용**: 나중에 유사한 취약점 검색 시 활용
     
-    [필요한 입력 구조]
+    ⚠️ **중요 제약사항**:
+    - meta.id는 반드시 고유해야 함 (중복 시 에러)
+    - meta.id는 테스트 컨트랙트 파일명과 일치해야 함 (파일 추적용)
+    - schema_1.0.yaml 구조를 정확히 따라야 함
+    - 빈 필드도 명시적으로 빈 값으로 설정 필요
+    
+    🔄 **다음 단계 워크플로우**:
+    1. add_unit_test로 다양한 공격 시나리오 테스트 추가
+    2. execute_unit_test로 각 테스트 검증
+    3. analyze_test_results로 결과 분석 및 인사이트 도출
+    4. generate_poc_from_tests로 최종 통합 PoC 생성
+    
+    📋 **입력 예시**:
+    ```json
     {
       "meta": {
-        "id": "고유 시나리오 ID", // 테스트 컨트랙트 파일 이름과 동일하게 설정
-        "title": "시나리오 제목",
-        "category": "취약점 카테고리",
-        "severity": "심각도 수준",
-        ...
+        "id": "REENTRANCY_ATTACK_001",
+        "title": "ERC20 Transfer Reentrancy PoC",
+        "category": "Reentrancy",
+        "severity": "critical",
+        "tags": ["reentrancy", "erc20", "defi"]
       },
       "spec": {
-        "description": "시나리오 설명",
-        "actors": [...],
-        "assets": [...],
-        ...
+        "description": "ERC20 토큰의 transfer 함수에서 발생하는 reentrancy 취약점",
+        "actors": [
+          {"id": "attacker", "role": "malicious_user", "trust_level": "untrusted"},
+          {"id": "victim", "role": "normal_user", "trust_level": "trusted"}
+        ],
+        "assets": [
+          {"name": "ETH", "type": "native_token", "critical": true},
+          {"name": "ERC20_Token", "type": "token", "critical": true}
+        ]
       },
       "code": {
-        "target_contract_name": "대상 컨트랙트명",
-        ...
+        "target_contract_name": "VulnerableToken",
+        "poc_contract": "// 통합 PoC 코드가 여기에 생성됨"
       },
-      ...
+      "unit_tests": []
     }
+    ```
     
-    [반환값]
-    - success: 등록 성공 여부
-    - message: 상태 메시지
+    ✅ **성공 시**: 시나리오 등록 완료, PoC 개발 프로젝트 시작 준비
+    ❌ **실패 시**: 중복 ID, 스키마 오류 등의 구체적 에러 메시지 반환
     """
     sid = scenario.get("meta", {}).get("id")
     if not sid:
@@ -651,7 +743,7 @@ def update_scenario(sid: str, update_dict: dict) -> dict:
 
 
 @mcp.tool()
-def analyze_test_results(sid: str, run_id: str, insights: Dict[str, Any]) -> dict:
+def analyze_test_results(sid: str, run_id: str, insights: Dict[str, Any], test_name: str = "") -> dict:
     """
     [MCP 시스템 컨텍스트]
     [순차적 검증 프로세스: 4단계 - 심층 분석 및 인사이트 도출]
@@ -709,7 +801,7 @@ def analyze_test_results(sid: str, run_id: str, insights: Dict[str, Any]) -> dic
     - message: 상태 메시지
     - insights_count: 현재까지 저장된 인사이트 수
     """
-    logger.info(f"[analyze_test_results] 호출: sid={sid}, run_id={run_id}")
+    logger.info(f"[analyze_test_results] 호출: sid={sid}, run_id={run_id}, test_name={test_name}")
     
     # 파일 변경 확인
     if sid in file_monitor.active_sids:
@@ -768,17 +860,18 @@ def analyze_test_results(sid: str, run_id: str, insights: Dict[str, Any]) -> dic
             logger.warning(f"시나리오 {sid}의 test_insights가 리스트가 아닙니다. 현재 타입: {type(doc.test_insights)}. 리스트로 초기화합니다.")
             doc.test_insights = []
             
-        # 인사이트 저장
-        doc.add_test_insight(run_id, insights)
+        # 인사이트 저장 (test_name 포함)
+        doc.add_test_insight(run_id, insights, test_name)
         save_scenario(doc)
         
         # 인사이트 개수 계산 (test_insights가 리스트가 아닐 경우 대비)
         insights_count = len(doc.test_insights) if isinstance(doc.test_insights, list) else 0
         
-        logger.info(f"인사이트 저장 완료: sid={sid}, run_id={run_id}, insights_count={insights_count}")
+        logger.info(f"인사이트 저장 완료: sid={sid}, run_id={run_id}, test_name={test_name}, insights_count={insights_count}")
         return {
             "success": True, 
             "message": f"시나리오 {sid}의 실행 {run_id}에 대한 인사이트가 저장되었습니다.",
+            "test_name": test_name,
             "insights_count": insights_count
         }
     except Exception as e:
@@ -1179,22 +1272,113 @@ async def llm_generate_test_improvement(sid: str, improvement_plan: str, foundry
 @mcp.tool()  
 async def llm_autonomous_verification_cycle(sid: str, foundry_root_path: str) -> dict:
     """
-    [LLM 완전 자율적 검증 사이클]
-    LLM이 스스로 분석하고 판단하여 테스트를 개선하는 완전 자율적 사이클입니다.
+    🤖 **PoC 자율적 완성도 향상: LLM 주도 개선 사이클**
     
-    이 도구는 다음과 같은 LLM 중심 워크플로우를 제공합니다:
-    1. LLM이 현재 상황을 종합적으로 분석
-    2. LLM이 필요한 개선사항을 스스로 판단
-    3. LLM이 구체적인 테스트 코드를 생성
-    4. 개선된 테스트를 실행하여 결과 확인
-    5. LLM이 결과를 평가하고 추가 개선 여부 결정
+    LLM이 현재 PoC의 상태를 스스로 분석하고, 부족한 부분을 식별하여 
+    자동으로 개선하는 완전 자율적 PoC 개발 사이클을 시작하는 도구입니다.
+    단순한 도구 호출을 넘어서 LLM의 창의적 사고를 활용한 지능적 PoC 완성도 관리를 제공합니다.
+    
+    🎯 **PoC 개발에서의 혁신적 역할**:
+    - 인간의 개입 없이 LLM이 스스로 PoC 품질을 평가하고 개선
+    - 놓치기 쉬운 공격 벡터나 엣지 케이스를 자동으로 발견
+    - 반복적인 분석→개선→테스트 사이클을 통한 PoC 완성도 극대화
+    - 창의적이고 독창적인 공격 시나리오 자동 생성 및 검증
+    
+    🧠 **LLM 자율적 사고 프로세스**:
+    1. **현재 상황 종합 분석**:
+       - 기존 테스트들의 커버리지와 성공률 평가
+       - 시나리오 특성에 맞는 공격 벡터 완성도 검토
+       - 보안 검증의 깊이와 폭 자체 진단
+    
+    2. **창의적 개선 계획 수립**:
+       - 일반적인 테스트를 넘어선 독창적 공격 방법 고안
+       - 실제 해커가 사용할 법한 고급 기법 시뮬레이션
+       - 방어 메커니즘을 우회하는 새로운 접근법 설계
+    
+    3. **자동 코드 생성 및 적용**:
+       - 설계한 개선사항을 실제 Solidity 코드로 구현
+       - 기존 테스트와의 조화를 고려한 통합적 접근
+       - 가독성과 실행 효율성을 모두 고려한 코드 품질 관리
+    
+    4. **실행 및 결과 평가**:
+       - 새로 생성한 테스트의 실제 동작 검증
+       - 예상과 다른 결과에 대한 원인 분석 및 재개선
+       - 전체 PoC 완성도에 대한 객관적 평가
+    
+    5. **지속적 개선 판단**:
+       - 추가 개선이 필요한지 스스로 판단
+       - 완성도가 충분하다면 최종 PoC 생성 단계로 진행
+       - 필요시 다음 사이클 계획 수립
+    
+    💡 **LLM을 위한 자율적 개선 전략**:
+    - **다각도 접근**: 기술적, 경제적, 사회적 관점에서 취약점 분석
+    - **시나리오 확장**: 단순 공격에서 복합 공격으로 점진적 발전
+    - **실용성 고려**: 실제 공격 상황에서 사용 가능한 현실적 PoC 개발
+    - **방어 관점**: 공격자와 방어자 양쪽 시각에서 균형잡힌 분석
+    
+    🔄 **자율적 사이클 워크플로우**:
+    ```
+    현재 상태 분석 → 개선 계획 수립 → 코드 생성 → 테스트 실행 → 결과 평가
+           ↑                                                           ↓
+    완성도 판단 ← 추가 개선 필요 시 ← 다음 사이클 계획 ← 성과 측정 ←
+    ```
+    
+    🎨 **창의적 PoC 개발 영역**:
+    - **새로운 공격 벡터**: 기존에 시도하지 않은 독창적 접근법
+    - **복합 취약점**: 여러 취약점을 조합한 고급 공격 시나리오
+    - **가스 최적화**: 실제 공격에서 경제적으로 실행 가능한 효율적 방법
+    - **타이밍 공격**: 블록체인 특성을 활용한 시간 기반 공격
+    - **MEV 활용**: 최대 추출 가치를 고려한 정교한 공격 설계
     
     Args:
-        sid: 시나리오 ID
-        foundry_root_path: Foundry 프로젝트 경로
-        
+        sid: 시나리오 ID (자율적 개선 대상)
+        foundry_root_path: Foundry 프로젝트 루트 디렉토리 경로
+    
     Returns:
-        dict: 자율적 사이클 실행 결과 및 LLM 판단을 위한 정보
+        dict: 자율적 사이클 시작 정보 및 LLM 가이드
+        - cycle_started: 사이클 시작 여부
+        - initial_analysis_data: 현재 상황 분석 데이터
+        - llm_instructions: LLM을 위한 상세 실행 지침
+        - success: 사이클 준비 성공 여부
+    
+    📋 **사용 예시**:
+    ```python
+    # PoC 자율적 개선 사이클 시작
+    cycle_result = await llm_autonomous_verification_cycle(
+        sid="REENTRANCY_ATTACK_001",
+        foundry_root_path="/path/to/foundry/project"
+    )
+    
+    if cycle_result["success"]:
+        print("🤖 자율적 개선 사이클 시작!")
+        print("LLM 지침:")
+        print(cycle_result["llm_instructions"])
+        
+        # LLM이 제공된 지침에 따라 자율적으로 개선 진행
+        # 1. 현재 상황 분석
+        # 2. 개선 계획 수립  
+        # 3. llm_generate_test_improvement 호출
+        # 4. execute_unit_test로 검증
+        # 5. 결과 평가 및 다음 단계 결정
+        
+    else:
+        print("❌ 자율적 사이클 시작 실패")
+        print(cycle_result.get("error", "알 수 없는 오류"))
+    ```
+    
+    🌟 **기대 효과**:
+    - **완성도 극대화**: 인간이 놓칠 수 있는 부분까지 자동 보완
+    - **창의성 확보**: LLM의 창의적 사고로 독창적 공격 시나리오 개발
+    - **효율성 향상**: 반복적 개선 작업의 자동화로 개발 시간 단축
+    - **품질 보장**: 체계적 자체 검증으로 PoC 신뢰성 확보
+    
+    ⚠️ **주의사항**:
+    - LLM의 자율적 판단에 의존하므로 최종 검토는 필수
+    - 복잡한 개선사항은 여러 사이클에 걸쳐 점진적으로 적용
+    - 생성된 코드는 반드시 별도 환경에서 안전성 검증 필요
+    
+    ✅ **성공 시**: LLM 주도 자율적 PoC 개선 프로세스 시작
+    ❌ **실패 시**: 시나리오 상태 문제 또는 환경 설정 오류
     """
     logger.info(f"[llm_autonomous_verification_cycle] LLM 자율적 검증 사이클 시작: {sid}")
     
@@ -1267,10 +1451,642 @@ async def llm_autonomous_verification_cycle(sid: str, foundry_root_path: str) ->
             "cycle_result": cycle_result
         }
 
+@mcp.tool()
+async def get_test_insights(sid: str, test_name: str = "") -> dict:
+    """
+    [MCP 시스템 컨텍스트]
+    특정 테스트 또는 모든 테스트의 인사이트를 조회합니다.
+    
+    Args:
+        sid: 시나리오 ID
+        test_name: 테스트 이름 (비어있으면 모든 테스트)
+    
+    Returns:
+        dict: 테스트 인사이트
+    """
+    logger.info(f"[get_test_insights] 호출: sid={sid}, test_name={test_name}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    try:
+        if test_name:
+            # 특정 테스트의 인사이트만 조회
+            insights = doc.get_insights_by_test(test_name)
+            return {
+                "success": True,
+                "test_name": test_name,
+                "insights": insights,
+                "insights_count": len(insights)
+            }
+        else:
+            # 모든 테스트의 인사이트 조회
+            all_insights = doc.get_cumulative_insights()
+            return {
+                "success": True,
+                "all_insights": all_insights,
+                "insights_count": len(all_insights)
+            }
+    except Exception as e:
+        error_msg = f"테스트 인사이트 조회 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+@mcp.tool()
+async def analyze_test_results_by_test(sid: str, test_name: str, run_id: str, insights: Dict[str, Any]) -> dict:
+    """
+    [MCP 시스템 컨텍스트]
+    특정 테스트의 실행 결과를 분석하고 인사이트를 저장합니다.
+    
+    Args:
+        sid: 시나리오 ID
+        test_name: 테스트 이름
+        run_id: 분석 대상 실행 ID
+        insights: LLM이 도출한 인사이트
+    
+    Returns:
+        dict: 분석 결과
+    """
+    logger.info(f"[analyze_test_results_by_test] 호출: sid={sid}, test_name={test_name}, run_id={run_id}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    # 테스트 존재 확인
+    test_info = doc.get_unit_test(test_name)
+    if not test_info:
+        return {"error": f"테스트 '{test_name}'이 시나리오 {sid}에 존재하지 않습니다."}
+    
+    try:
+        # 인사이트 저장 (test_name 포함)
+        doc.add_test_insight(run_id, insights, test_name)
+        save_scenario(doc)
+        
+        insights_count = len(doc.get_insights_by_test(test_name))
+        
+        logger.info(f"테스트별 인사이트 저장 완료: sid={sid}, test_name={test_name}, run_id={run_id}")
+        return {
+            "success": True,
+            "message": f"테스트 '{test_name}'의 인사이트가 저장되었습니다.",
+            "test_insights_count": insights_count
+        }
+    except Exception as e:
+        error_msg = f"테스트별 인사이트 저장 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+@mcp.tool()
+async def generate_poc_from_tests(sid: str) -> dict:
+    """
+    🎯 **PoC 통합 생성: 최종 완성된 PoC 코드 자동 생성**
+    
+    시나리오에 등록된 모든 유닛테스트들을 분석하여 하나의 완성된 통합 PoC 코드를 
+    자동으로 생성하는 도구입니다. 개별 테스트들의 핵심 공격 로직을 결합하여 
+    실제 사용 가능한 최종 PoC 컨트랙트를 만들어냅니다.
+    
+    🎯 **PoC 개발에서의 역할**:
+    - 분산된 테스트 케이스들을 하나의 통합 PoC로 결합
+    - 각 테스트의 핵심 공격 로직만 추출하여 최적화된 코드 생성
+    - 실제 공격에 사용할 수 있는 완성된 형태의 PoC 제공
+    - 감사 보고서나 취약점 보고서에 첨부할 수 있는 최종 산출물
+    
+    💡 **LLM 활용 가이드**:
+    1. **생성 전 준비사항 확인**:
+       - 모든 핵심 테스트가 성공적으로 실행되었는지 확인
+       - 각 테스트가 서로 다른 공격 벡터를 다루는지 검토
+       - 중복되거나 불필요한 테스트는 제거 고려
+    
+    2. **생성된 PoC 검토 포인트**:
+       - 모든 공격 시나리오가 포함되었는지 확인
+       - 코드의 가독성과 실행 가능성 검토
+       - 불필요한 중복 코드나 테스트 전용 코드 제거 필요성 판단
+    
+    3. **PoC 완성도 평가**:
+       - 실제 공격 상황에서 사용 가능한 수준인지 평가
+       - 추가 최적화나 정리가 필요한 부분 식별
+       - 문서화 및 주석 추가 필요성 검토
+    
+    🔧 **생성되는 PoC 구조**:
+    - 헤더: 시나리오 정보, 생성 일시, 설명
+    - 각 테스트별 섹션: 테스트명, 설명, 핵심 코드
+    - 통합 주석: 전체 공격 흐름과 주요 포인트 설명
+    - 실행 가이드: PoC 사용 방법 및 주의사항
+    
+    🔄 **생성 후 권장 워크플로우**:
+    1. **PoC 검토 및 테스트**:
+       - 생성된 PoC 코드를 별도 환경에서 실행 테스트
+       - 예상대로 작동하는지 검증
+    
+    2. **최적화 및 정리**:
+       - 불필요한 코드 제거
+       - 주석 및 문서화 개선
+       - 가스 효율성 최적화
+    
+    3. **최종 검증**:
+       - 다양한 환경에서 PoC 실행 테스트
+       - 방어 메커니즘 우회 여부 확인
+       - 실제 공격 시나리오와의 일치성 검토
+    
+    4. **문서화 및 보고**:
+       - PoC 사용법 문서 작성
+       - 취약점 영향도 및 해결 방안 정리
+       - 감사 보고서 또는 버그 바운티 제출 준비
+    
+    Args:
+        sid: 시나리오 ID (유닛테스트들이 등록된 시나리오)
+    
+    Returns:
+        dict: PoC 생성 결과 및 통합 코드
+        - success: 생성 성공 여부
+        - message: 생성 결과 메시지
+        - poc_contract: 생성된 통합 PoC 코드 (Solidity)
+        - test_count: 통합된 테스트 수
+    
+    📋 **사용 예시**:
+    ```python
+    # 모든 테스트 완료 후 최종 PoC 생성
+    poc_result = await generate_poc_from_tests("REENTRANCY_ATTACK_001")
+    
+    if poc_result["success"]:
+        print("🎉 PoC 생성 완료!")
+        print(f"통합된 테스트 수: {poc_result['test_count']}")
+        
+        # 생성된 PoC 코드 확인
+        poc_code = poc_result["poc_contract"]
+        print("생성된 PoC 코드:")
+        print(poc_code)
+        
+        # 파일로 저장하여 별도 테스트 진행
+        with open("FinalPoC.sol", "w") as f:
+            f.write(poc_code)
+            
+    else:
+        print("❌ PoC 생성 실패")
+        print(poc_result.get("message", "알 수 없는 오류"))
+    ```
+    
+    ⚠️ **주의사항**:
+    - 유닛테스트가 없는 시나리오에서는 생성 불가
+    - 생성된 PoC는 반드시 별도 환경에서 검증 필요
+    - 실제 메인넷에서 사용 시 법적/윤리적 책임 고려 필요
+    
+    ✅ **성공 시**: 완성된 PoC 코드 제공, 최종 검증 및 문서화 단계로 진행
+    ❌ **실패 시**: 테스트 부족, 코드 오류 등의 구체적 원인 제시
+    """
+    logger.info(f"[generate_poc_from_tests] 호출: sid={sid}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    if not doc.unit_tests:
+        return {"error": f"시나리오 {sid}에 유닛테스트가 없습니다."}
+    
+    try:
+        # 모든 테스트 코드를 결합하여 PoC 생성
+        poc_parts = []
+        poc_parts.append("// === 통합 PoC 코드 ===")
+        poc_parts.append(f"// 시나리오: {doc.meta.get('title', sid)}")
+        poc_parts.append(f"// 생성일: {datetime.datetime.utcnow().isoformat()}")
+        poc_parts.append("")
+        
+        for i, test in enumerate(doc.unit_tests):
+            test_name = test.get("test_name", f"test_{i}")
+            description = test.get("description", "")
+            test_code = test.get("test_code", "")
+            
+            poc_parts.append(f"    // {test_name}: {description}")
+            poc_parts.append(f"    {test_code}")
+            poc_parts.append("")
+        
+        poc_contract = "\n".join(poc_parts)
+        
+        # code 섹션 업데이트
+        if not hasattr(doc, 'code') or not isinstance(doc.code, dict):
+            doc.code = {}
+        
+        doc.code["poc_contract"] = poc_contract
+        doc.code["target_contract_name"] = doc.meta.get("id", sid)
+        
+        save_scenario(doc)
+        
+        logger.info(f"PoC 코드 생성 완료: sid={sid}")
+        return {
+            "success": True,
+            "message": f"시나리오 {sid}의 PoC 코드가 생성되었습니다.",
+            "poc_contract": poc_contract,
+            "test_count": len(doc.unit_tests)
+        }
+    except Exception as e:
+        error_msg = f"PoC 코드 생성 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+################################################################################
+# 새로 추가: n개 유닛테스트 관리 도구들
+################################################################################
+
+@mcp.tool()
+async def add_unit_test(sid: str, test_name: str, description: str, test_code: str, expected_behavior: str = "", tags: List[str] = None) -> dict:
+    """
+    🧪 **PoC 테스트 케이스 확장: 새로운 공격 시나리오 추가**
+    
+    등록된 시나리오에 새로운 유닛테스트를 추가하여 PoC의 완성도를 높이는 도구입니다.
+    각 테스트는 취약점의 서로 다른 측면이나 공격 벡터를 검증하며, 
+    최종적으로 모든 테스트가 통합되어 완전한 PoC 코드를 구성합니다.
+    
+    🎯 **PoC 개발에서의 역할**:
+    - 기본 공격 시나리오부터 복잡한 엣지 케이스까지 단계적 확장
+    - 각 테스트는 독립적으로 실행 가능하면서도 전체 PoC의 일부
+    - 다양한 공격 벡터를 체계적으로 검증하여 PoC의 신뢰성 확보
+    - 방어 메커니즘 우회, 상태 조작, 가스 최적화 등 다각도 접근
+    
+    💡 **LLM 테스트 설계 가이드**:
+    1. **기본 공격**: 가장 단순한 형태의 취약점 악용
+    2. **엣지 케이스**: 경계값, 특수 상황에서의 동작 검증
+    3. **방어 우회**: 기존 보안 메커니즘을 우회하는 방법
+    4. **상태 조작**: 컨트랙트 상태를 조작하여 취약점 확대
+    5. **가스 최적화**: 실제 공격에서 사용 가능한 효율적 방법
+    6. **복합 공격**: 여러 취약점을 조합한 고급 공격 시나리오
+    
+    🏷️ **효과적인 태그 활용**:
+    - "basic_attack": 기본적인 공격 시나리오
+    - "edge_case": 경계값이나 특수 상황 테스트
+    - "bypass": 방어 메커니즘 우회 테스트
+    - "state_manipulation": 상태 조작 관련 테스트
+    - "gas_optimized": 가스 효율성을 고려한 테스트
+    - "complex": 복합적인 공격 시나리오
+    - "poc_critical": PoC의 핵심이 되는 중요 테스트
+    
+    📝 **테스트 코드 작성 팁**:
+    - Solidity 함수 형태로 작성 (function test_xxx() public {})
+    - vm.expectRevert() 또는 성공 시나리오에 따른 적절한 assertion 사용
+    - console.log()로 실행 과정 추적 가능하게 작성
+    - 명확한 주석으로 공격 단계별 설명 포함
+    
+    🔄 **다음 단계 워크플로우**:
+    1. execute_unit_test로 새로 추가한 테스트 실행
+    2. get_test_logs로 실행 결과 상세 분석
+    3. analyze_test_results_by_test로 인사이트 도출
+    4. 필요시 추가 테스트 케이스 설계 및 추가
+    5. 모든 테스트 완료 후 generate_poc_from_tests로 통합 PoC 생성
+    
+    Args:
+        sid: 시나리오 ID (기존에 등록된 시나리오여야 함)
+        test_name: 테스트 함수 이름 (예: "test_basic_reentrancy_attack")
+        description: 테스트의 목적과 검증 내용 설명
+        test_code: Solidity 테스트 함수 코드
+        expected_behavior: 예상되는 실행 결과 (성공/실패/특정 상태 변화 등)
+        tags: 테스트 분류를 위한 태그 목록
+    
+    Returns:
+        dict: 테스트 추가 결과 및 현재 테스트 목록 정보
+        
+    📋 **사용 예시**:
+    ```python
+    await add_unit_test(
+        sid="REENTRANCY_ATTACK_001",
+        test_name="test_basic_reentrancy",
+        description="기본적인 reentrancy 공격으로 토큰 이중 인출",
+        test_code='''
+        function test_basic_reentrancy() public {
+            // 공격자 컨트랙트 배포
+            AttackerContract attacker = new AttackerContract(address(vulnerableToken));
+            
+            // 초기 잔액 설정
+            vulnerableToken.mint(address(attacker), 1000 ether);
+            
+            // 공격 실행
+            attacker.attack();
+            
+            // 결과 검증: 예상보다 많은 토큰 획득
+            assertGt(attacker.stolenAmount(), 1000 ether);
+        }
+        ''',
+        expected_behavior="공격자가 초기 잔액보다 많은 토큰을 획득함",
+        tags=["basic_attack", "reentrancy", "poc_critical"]
+    )
+    ```
+    
+    ✅ **성공 시**: 테스트 추가 완료, 다음 테스트 실행 준비
+    ❌ **실패 시**: 시나리오 없음, 중복 테스트명 등의 에러 메시지
+    """
+    logger.info(f"[add_unit_test] 호출: sid={sid}, test_name={test_name}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    try:
+        if tags is None:
+            tags = []
+        
+        new_test = doc.add_unit_test(test_name, description, test_code, expected_behavior, tags)
+        save_scenario(doc)
+        
+        logger.info(f"유닛테스트 추가 완료: sid={sid}, test_name={test_name}")
+        return {
+            "success": True,
+            "message": f"유닛테스트 '{test_name}'이 시나리오 {sid}에 추가되었습니다.",
+            "test_info": new_test
+        }
+    except Exception as e:
+        error_msg = f"유닛테스트 추가 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+@mcp.tool()
+async def get_unit_tests(sid: str) -> dict:
+    """
+    [MCP 시스템 컨텍스트]
+    시나리오의 모든 유닛테스트 목록을 조회합니다.
+    
+    Args:
+        sid: 시나리오 ID
+    
+    Returns:
+        dict: 유닛테스트 목록 및 요약 정보
+    """
+    logger.info(f"[get_unit_tests] 호출: sid={sid}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    try:
+        test_summary = doc.get_test_summary()
+        
+        return {
+            "success": True,
+            "unit_tests": doc.unit_tests,
+            "summary": test_summary
+        }
+    except Exception as e:
+        error_msg = f"유닛테스트 조회 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+@mcp.tool()
+async def execute_unit_test(sid: str, test_name: str, foundry_root_path: str) -> dict:
+    """
+    ⚡ **PoC 테스트 실행: 개별 공격 시나리오 검증**
+    
+    추가된 유닛테스트를 실제로 실행하여 공격 시나리오가 예상대로 작동하는지 검증하는 도구입니다.
+    각 테스트의 성공/실패를 통해 PoC의 유효성을 확인하고, 실행 과정에서 발생하는 
+    모든 정보를 수집하여 PoC 개선에 활용합니다.
+    
+    🎯 **PoC 개발에서의 역할**:
+    - 이론적 공격 시나리오를 실제 블록체인 환경에서 검증
+    - 테스트 실패 시 코드 수정 방향 제시
+    - 테스트 성공 시 공격 패턴과 결과 데이터 수집
+    - 가스 사용량, 상태 변화, 이벤트 로그 등 실행 컨텍스트 분석
+    
+    💡 **LLM 실행 결과 활용 가이드**:
+    1. **성공 시**: 
+       - stdout에서 console.log 출력 확인
+       - 가스 사용량과 상태 변화 패턴 분석
+       - 다음 테스트 케이스 설계에 활용
+    2. **실패 시**:
+       - stderr에서 구체적 에러 원인 파악
+       - 컴파일 에러 vs 런타임 에러 구분
+       - 테스트 코드 수정 또는 환경 설정 조정
+    3. **부분 성공 시**:
+       - 예상과 다른 결과의 원인 분석
+       - 추가 검증 로직 필요성 판단
+    
+    🔍 **수집되는 실행 정보**:
+    - 테스트 성공/실패 상태
+    - 표준 출력 (console.log, 가스 정보 등)
+    - 에러 메시지 (컴파일/런타임 에러)
+    - 실행 ID (추후 상세 분석용)
+    - 실행 시간 및 환경 정보
+    
+    🔄 **실행 후 권장 워크플로우**:
+    1. **성공한 경우**:
+       - get_test_logs로 상세 실행 로그 분석
+       - analyze_test_results_by_test로 인사이트 도출
+       - 다음 테스트 케이스 추가 또는 PoC 통합 진행
+    2. **실패한 경우**:
+       - 에러 메시지 분석하여 문제점 파악
+       - 테스트 코드 수정 또는 환경 설정 조정
+       - 수정 후 재실행하여 검증
+    
+    🚨 **일반적인 실패 원인과 해결책**:
+    - **컴파일 에러**: import 누락, 문법 오류 → 테스트 코드 수정
+    - **런타임 에러**: 잘못된 주소, 권한 부족 → 테스트 환경 설정 확인
+    - **Assertion 실패**: 예상과 다른 결과 → 공격 로직 또는 검증 로직 재검토
+    - **가스 부족**: 복잡한 공격 → 가스 한도 조정 또는 최적화
+    
+    Args:
+        sid: 시나리오 ID
+        test_name: 실행할 테스트 함수 이름
+        foundry_root_path: Foundry 프로젝트 루트 디렉토리 경로
+    
+    Returns:
+        dict: 테스트 실행 결과 및 상세 정보
+        - success: 테스트 성공 여부
+        - test_name: 실행된 테스트 이름
+        - stdout: 표준 출력 (console.log, 가스 정보 등)
+        - stderr: 에러 메시지
+        - run_id: 실행 ID (상세 분석용)
+        - status: 실행 상태 ("SUCCESS" 또는 "TEST_FAILURE")
+    
+    📋 **사용 예시**:
+    ```python
+    result = await execute_unit_test(
+        sid="REENTRANCY_ATTACK_001",
+        test_name="test_basic_reentrancy",
+        foundry_root_path="/path/to/foundry/project"
+    )
+    
+    if result["success"]:
+        print("✅ 공격 성공! PoC 유효성 확인됨")
+        print(f"실행 로그: {result['stdout']}")
+        # 다음 단계: 인사이트 분석
+    else:
+        print("❌ 공격 실패, 코드 수정 필요")
+        print(f"에러: {result['stderr']}")
+        # 다음 단계: 에러 분석 및 코드 수정
+    ```
+    
+    ✅ **성공 시**: 공격 시나리오 검증 완료, 인사이트 분석 단계로 진행
+    ❌ **실패 시**: 구체적 에러 정보 제공, 코드 수정 후 재실행 필요
+    """
+    logger.info(f"[execute_unit_test] 호출: sid={sid}, test_name={test_name}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    # 테스트 존재 확인
+    test_info = doc.get_unit_test(test_name)
+    if not test_info:
+        return {"error": f"테스트 '{test_name}'이 시나리오 {sid}에 존재하지 않습니다."}
+    
+    try:
+        # Foundry 테스트 실행 (특정 테스트 함수만)
+        forge_tool = FoundryTool()
+        success, stdout, stderr = forge_tool.runUnitTest(
+            test_contract_name=None,  # 전체 컨트랙트에서 특정 함수만 실행
+            foundry_root_path=foundry_root_path
+        )
+        
+        # 실행 결과 저장
+        status = "SUCCESS" if success else "TEST_FAILURE"
+        diff_for_runlog = f"[{sid}] execute_unit_test: {test_name}"
+        run_id = str(uuid.uuid4())
+        
+        # 시나리오 객체에 로그 추가 (test_name 포함)
+        doc.add_run_log(
+            run_id=run_id,
+            status=status,
+            diff=diff_for_runlog,
+            stdout=stdout,
+            stderr=stderr,
+            test_name=test_name
+        )
+        
+        # 힌트 업데이트
+        doc.update_hints_from_run(run_id, status, stdout, stderr)
+        
+        # 시나리오 저장
+        save_scenario(doc)
+        
+        # 글로벌 runlog 테이블에도 저장
+        add_runlog_entry(sid, status, diff_for_runlog, stdout, stderr, test_name)
+        
+        logger.info(f"유닛테스트 실행 완료: sid={sid}, test_name={test_name}, run_id={run_id}")
+        
+        return {
+            "success": success,
+            "test_name": test_name,
+            "stdout": stdout,
+            "stderr": stderr,
+            "run_id": run_id,
+            "status": status
+        }
+    except Exception as e:
+        error_msg = f"유닛테스트 실행 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+@mcp.tool()
+async def execute_all_unit_tests(sid: str, foundry_root_path: str) -> dict:
+    """
+    [MCP 시스템 컨텍스트]
+    시나리오의 모든 유닛테스트를 순차적으로 실행합니다.
+    
+    Args:
+        sid: 시나리오 ID
+        foundry_root_path: Foundry 프로젝트 경로
+    
+    Returns:
+        dict: 모든 테스트 실행 결과 요약
+    """
+    logger.info(f"[execute_all_unit_tests] 호출: sid={sid}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    if not doc.unit_tests:
+        return {"error": f"시나리오 {sid}에 유닛테스트가 없습니다."}
+    
+    results = []
+    total_tests = len(doc.unit_tests)
+    successful_tests = 0
+    
+    try:
+        for test in doc.unit_tests:
+            test_name = test.get("test_name", "")
+            if not test_name:
+                continue
+            
+            logger.info(f"테스트 실행 중: {test_name}")
+            
+            # 개별 테스트 실행
+            result = await execute_unit_test(sid, test_name, foundry_root_path)
+            results.append({
+                "test_name": test_name,
+                "result": result
+            })
+            
+            if result.get("success", False):
+                successful_tests += 1
+        
+        # 전체 실행 결과 요약
+        summary = {
+            "total_tests": total_tests,
+            "successful_tests": successful_tests,
+            "failed_tests": total_tests - successful_tests,
+            "success_rate": successful_tests / total_tests if total_tests > 0 else 0
+        }
+        
+        logger.info(f"모든 유닛테스트 실행 완료: sid={sid}, 성공률={summary['success_rate']:.2%}")
+        
+        return {
+            "success": True,
+            "summary": summary,
+            "test_results": results
+        }
+    except Exception as e:
+        error_msg = f"유닛테스트 일괄 실행 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
+@mcp.tool()
+async def get_test_logs(sid: str, test_name: str = "") -> dict:
+    """
+    [MCP 시스템 컨텍스트]
+    특정 테스트 또는 모든 테스트의 실행 로그를 조회합니다.
+    
+    Args:
+        sid: 시나리오 ID
+        test_name: 테스트 이름 (비어있으면 모든 테스트)
+    
+    Returns:
+        dict: 테스트 실행 로그
+    """
+    logger.info(f"[get_test_logs] 호출: sid={sid}, test_name={test_name}")
+    
+    doc = load_scenario(sid)
+    if not doc:
+        return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
+    
+    try:
+        if test_name:
+            # 특정 테스트의 로그만 조회
+            logs = doc.get_runlog_by_test(test_name)
+            return {
+                "success": True,
+                "test_name": test_name,
+                "logs": logs,
+                "log_count": len(logs)
+            }
+        else:
+            # 모든 테스트의 로그 조회
+            return {
+                "success": True,
+                "all_logs": doc.runlog,
+                "log_count": len(doc.runlog)
+            }
+    except Exception as e:
+        error_msg = f"테스트 로그 조회 중 오류: {str(e)}"
+        logger.error(error_msg)
+        return {"error": error_msg}
+
 ################################################################################
 # 서버 실행  
 ################################################################################
 
 if __name__ == "__main__":
-    logger.info("🔄 dynamic-schema MCP server started")
+    # DB 초기화
+    init_db()
+    
+    logger.info("🔄 dynamic-schema MCP server v1.4.0 started")
+    logger.info(f"📊 등록된 도구 수: {len(mcp._tool_manager._tools) if hasattr(mcp, '_tool_manager') and hasattr(mcp._tool_manager, '_tools') else '알 수 없음'}")
+    
+    # MCP 서버 실행 (stdio 모드)
     mcp.run(transport="stdio")
