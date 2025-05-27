@@ -30,7 +30,10 @@ from main import (
     # 유닛테스트 관리
     add_unit_test, get_unit_tests, execute_unit_test, execute_all_unit_tests,
     get_test_logs, get_test_insights, analyze_test_results_by_test,
-    generate_poc_from_tests,
+    # PoC 생성
+    generate_poc_code,
+    # 코드베이스 탐색
+    explore_codebase, analyze_test_file,
     # LLM 자율적 검증
     llm_assess_verification_needs, llm_generate_test_improvement,
     llm_autonomous_verification_cycle,
@@ -430,48 +433,79 @@ class TestUnitTestManagement:
             "test_code_snapshots": {}
         }
     
+    @patch('main.os.path.exists')
+    @patch('builtins.open', create=True)
     @patch('main.load_scenario')
     @patch('main.save_scenario')
     @pytest.mark.asyncio
-    async def test_add_unit_test_success(self, mock_save, mock_load):
-        """add_unit_test 도구 성공 테스트"""
+    async def test_add_unit_test_success(self, mock_save, mock_load, mock_open, mock_exists):
+        """add_unit_test 도구 성공 테스트 (기존 테스트 파일 참조)"""
         mock_doc = ScenarioDoc.from_json(json.dumps(self.test_scenario))
         mock_load.return_value = mock_doc
         mock_save.return_value = True
+        mock_exists.return_value = True
+        
+        # 테스트 파일 내용 모킹
+        test_file_content = """
+        pragma solidity ^0.8.0;
+        
+        contract TestContract {
+            function test_new() public {
+                // 새로운 테스트 함수
+            }
+        }
+        """
+        mock_open.return_value.__enter__.return_value.read.return_value = test_file_content
         
         result = await add_unit_test(
             self.test_sid,
             "test_new",
             "새로운 테스트",
-            "function test_new() public {}",
+            "test/TestContract.t.sol",  # test_file_path로 변경
             "성공",
             ["new"]
         )
         
         assert result["success"] is True
-        assert "추가되었습니다" in result["message"]
+        assert "등록되었습니다" in result["message"]
         mock_load.assert_called_once_with(self.test_sid)
         mock_save.assert_called_once()
+        mock_exists.assert_called_once_with("test/TestContract.t.sol")
     
+    @patch('main.os.path.exists')
+    @patch('builtins.open', create=True)
     @patch('main.load_scenario')
     @pytest.mark.asyncio
-    async def test_add_unit_test_duplicate_name(self, mock_load):
+    async def test_add_unit_test_duplicate_name(self, mock_load, mock_open, mock_exists):
         """add_unit_test 도구 중복 이름 테스트"""
         mock_doc = ScenarioDoc.from_json(json.dumps(self.test_scenario))
         mock_load.return_value = mock_doc
+        mock_exists.return_value = True
+        
+        # 테스트 파일 내용 모킹
+        test_file_content = """
+        pragma solidity ^0.8.0;
+        
+        contract TestContract {
+            function test_existing() public {
+                // 기존 테스트 함수
+            }
+        }
+        """
+        mock_open.return_value.__enter__.return_value.read.return_value = test_file_content
         
         result = await add_unit_test(
             self.test_sid,
             "test_existing",  # 이미 존재하는 이름
             "중복 테스트",
-            "function test_existing() public {}",
+            "test/TestContract.t.sol",  # test_file_path로 변경
             "실패",
             ["duplicate"]
         )
         
         # 실제로는 중복 시 업데이트하므로 성공
         assert result["success"] is True
-        assert "추가되었습니다" in result["message"] or "업데이트" in result["message"]
+        assert "등록되었습니다" in result["message"] or "업데이트" in result["message"]
         mock_load.assert_called_once_with(self.test_sid)
     
     @patch('main.load_scenario')
@@ -488,6 +522,231 @@ class TestUnitTestManagement:
         assert result["unit_tests"][0]["test_name"] == "test_existing"
         assert "summary" in result  # 실제로는 summary 필드가 있음
         mock_load.assert_called_once_with(self.test_sid)
+    
+    @patch('main.os.path.exists')
+    @patch('builtins.open', create=True)
+    @patch('main.load_scenario')
+    @pytest.mark.asyncio
+    async def test_add_unit_test_file_not_found(self, mock_load, mock_open, mock_exists):
+        """add_unit_test 도구 파일 없음 테스트"""
+        mock_doc = ScenarioDoc.from_json(json.dumps(self.test_scenario))
+        mock_load.return_value = mock_doc
+        mock_exists.return_value = False  # 파일이 존재하지 않음
+        
+        result = await add_unit_test(
+            self.test_sid,
+            "test_new",
+            "새로운 테스트",
+            "test/NonExistent.t.sol",
+            "성공",
+            ["new"]
+        )
+        
+        assert "error" in result
+        assert "존재하지 않습니다" in result["error"]
+        mock_load.assert_called_once_with(self.test_sid)
+        mock_exists.assert_called_once_with("test/NonExistent.t.sol")
+    
+    @patch('main.os.path.exists')
+    @patch('builtins.open', create=True)
+    @patch('main.load_scenario')
+    @pytest.mark.asyncio
+    async def test_add_unit_test_function_not_found(self, mock_load, mock_open, mock_exists):
+        """add_unit_test 도구 함수 없음 테스트"""
+        mock_doc = ScenarioDoc.from_json(json.dumps(self.test_scenario))
+        mock_load.return_value = mock_doc
+        mock_exists.return_value = True
+        
+        # 테스트 파일에 해당 함수가 없는 경우
+        test_file_content = """
+        pragma solidity ^0.8.0;
+        
+        contract TestContract {
+            function test_other() public {
+                // 다른 테스트 함수
+            }
+        }
+        """
+        mock_open.return_value.__enter__.return_value.read.return_value = test_file_content
+        
+        result = await add_unit_test(
+            self.test_sid,
+            "test_missing",  # 파일에 없는 함수
+            "없는 테스트",
+            "test/TestContract.t.sol",
+            "성공",
+            ["missing"]
+        )
+        
+        assert "error" in result
+        assert "찾을 수 없습니다" in result["error"]
+        mock_load.assert_called_once_with(self.test_sid)
+
+
+class TestCodebaseExplorationTools:
+    """코드베이스 탐색 도구들 테스트"""
+    
+    def setup_method(self):
+        """각 테스트 전 실행되는 설정"""
+        self.foundry_root = "/test/foundry/project"
+    
+    @patch('main.os.path.exists')
+    @patch('main.os.walk')
+    @patch('builtins.open', create=True)
+    @pytest.mark.asyncio
+    async def test_explore_codebase_success(self, mock_open, mock_walk, mock_exists):
+        """explore_codebase 도구 성공 테스트"""
+        mock_exists.return_value = True
+        
+        # os.walk 모킹
+        mock_walk.return_value = [
+            ("/test/foundry/project/src", [], ["Contract1.sol", "Contract2.sol"]),
+            ("/test/foundry/project/src/lib", [], ["Library.sol"])
+        ]
+        
+        # 파일 내용 모킹
+        contract_content = """
+        pragma solidity ^0.8.0;
+        
+        contract TestContract {
+            uint256 public value;
+            
+            function setValue(uint256 _value) public {
+                value = _value;
+            }
+            
+            function getValue() public view returns (uint256) {
+                return value;
+            }
+        }
+        """
+        mock_open.return_value.__enter__.return_value.read.return_value = contract_content
+        
+        result = await explore_codebase(self.foundry_root, "src")
+        
+        assert result["success"] is True
+        assert "files" in result
+        assert "contracts" in result
+        assert "summary" in result
+        mock_exists.assert_called_once()
+    
+    @patch('main.os.path.exists')
+    @pytest.mark.asyncio
+    async def test_explore_codebase_folder_not_found(self, mock_exists):
+        """explore_codebase 도구 폴더 없음 테스트"""
+        mock_exists.return_value = False
+        
+        result = await explore_codebase(self.foundry_root, "nonexistent")
+        
+        assert "error" in result
+        assert "존재하지 않습니다" in result["error"]
+    
+    @patch('main.os.path.exists')
+    @patch('builtins.open', create=True)
+    @pytest.mark.asyncio
+    async def test_analyze_test_file_success(self, mock_open, mock_exists):
+        """analyze_test_file 도구 성공 테스트"""
+        mock_exists.return_value = True
+        
+        # 테스트 파일 내용 모킹
+        test_file_content = """
+        pragma solidity ^0.8.0;
+        import "forge-std/Test.sol";
+        
+        contract TestContract is Test {
+            function setUp() public {
+                // 초기화
+            }
+            
+            function test_basic() public {
+                // 기본 테스트
+            }
+            
+            function test_advanced() public {
+                // 고급 테스트
+            }
+            
+            function helper_function() internal {
+                // 헬퍼 함수
+            }
+        }
+        """
+        mock_open.return_value.__enter__.return_value.read.return_value = test_file_content
+        
+        result = await analyze_test_file(self.foundry_root, "test/TestContract.t.sol")
+        
+        assert result["success"] is True
+        assert "file_info" in result
+        assert "test_functions" in result
+        assert "setup_functions" in result
+        assert "helper_functions" in result
+        assert "imports" in result
+        assert "summary" in result
+
+
+class TestPoCGenerationTools:
+    """PoC 생성 도구들 테스트"""
+    
+    def setup_method(self):
+        """각 테스트 전 실행되는 설정"""
+        self.test_sid = "POC_TEST_001"
+        self.foundry_root = "/test/foundry/project"
+        self.test_scenario = {
+            "meta": {
+                "id": self.test_sid,
+                "title": "PoC 생성 테스트",
+                "category": "PoC",
+                "severity": "high"
+            },
+            "spec": {
+                "description": "PoC 생성 테스트용 시나리오입니다"
+            },
+            "code": {},
+            "unit_tests": [],
+            "hints": {},
+            "patches": [],
+            "runlog": [],
+            "extras": {},
+            "test_insights": [
+                {
+                    "run_id": "run_001",
+                    "test_name": "test_exploit",
+                    "patterns": "reentrancy 패턴 발견",
+                    "security_implications": "자금 탈취 가능",
+                    "confidence": 0.9
+                }
+            ],
+            "test_code_snapshots": {}
+        }
+    
+    @patch('main.os.path.exists')
+    @patch('main.os.listdir')
+    @patch('main.os.makedirs')
+    @patch('builtins.open', create=True)
+    @patch('main.load_scenario')
+    @patch('main.save_scenario')
+    @pytest.mark.asyncio
+    async def test_generate_poc_code_success(self, mock_save, mock_load, mock_open, mock_makedirs, mock_listdir, mock_exists):
+        """generate_poc_code 도구 성공 테스트"""
+        mock_doc = ScenarioDoc.from_json(json.dumps(self.test_scenario))
+        mock_load.return_value = mock_doc
+        mock_save.return_value = True
+        mock_exists.return_value = True
+        mock_listdir.return_value = ["VulnerableContract.sol", "Token.sol"]
+        
+        # 파일 쓰기 모킹
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+        
+        result = await generate_poc_code(self.test_sid, self.foundry_root, "contract")
+        
+        assert result["success"] is True
+        assert "poc_code" in result
+        assert "file_path" in result
+        assert "poc_type" in result
+        assert result["poc_type"] == "contract"
+        mock_load.assert_called_once_with(self.test_sid)
+        mock_save.assert_called_once()
 
 
 class TestMiscellaneousTools:

@@ -201,6 +201,46 @@ class TestScenarioDoc:
         assert new_test["test_name"] == "test_new_feature"
         assert new_test["tags"] == ["new", "feature"]
     
+    def test_add_unit_test_reference(self):
+        """유닛테스트 참조 추가 테스트"""
+        doc = ScenarioDoc.from_json(json.dumps(self.sample_scenario))
+        
+        new_test = doc.add_unit_test_reference(
+            test_name="test_existing_file",
+            description="기존 파일 테스트",
+            test_file_path="test/ExistingTest.t.sol",
+            expected_behavior="성공",
+            tags=["existing", "file"]
+        )
+        
+        assert len(doc.unit_tests) == 2
+        assert new_test["test_name"] == "test_existing_file"
+        assert new_test["test_file_path"] == "test/ExistingTest.t.sol"
+        assert new_test["description"] == "기존 파일 테스트"
+        assert new_test["tags"] == ["existing", "file"]
+        assert "test_code" not in new_test  # test_code 필드는 없어야 함
+    
+    def test_add_unit_test_reference_duplicate_name(self):
+        """유닛테스트 참조 중복 이름 테스트"""
+        doc = ScenarioDoc.from_json(json.dumps(self.sample_scenario))
+        
+        # 기존 테스트와 같은 이름으로 참조 추가
+        updated_test = doc.add_unit_test_reference(
+            test_name="test_basic_functionality",  # 이미 존재하는 이름
+            description="업데이트된 설명",
+            test_file_path="test/Updated.t.sol",
+            expected_behavior="업데이트됨",
+            tags=["updated"]
+        )
+        
+        # 여전히 1개여야 함 (새로 추가되지 않고 업데이트됨)
+        assert len(doc.unit_tests) == 1
+        assert updated_test["description"] == "업데이트된 설명"
+        assert updated_test["test_file_path"] == "test/Updated.t.sol"
+        assert updated_test["tags"] == ["updated"]
+        # 기존 test_code는 제거되고 test_file_path가 추가됨
+        assert "test_code" not in updated_test
+    
     def test_add_unit_test_duplicate_name(self):
         """중복 테스트 이름 처리 테스트"""
         doc = ScenarioDoc.from_json(json.dumps(self.sample_scenario))

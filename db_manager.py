@@ -302,6 +302,47 @@ class ScenarioDoc:
         logger.info(f"새 유닛테스트 추가: {test_name}")
         return new_test
     
+    def add_unit_test_reference(self, test_name: str, description: str, test_file_path: str, expected_behavior: str = "", tags: List[str] = None):
+        """
+        시나리오에 기존 유닛테스트 파일 참조 추가
+        
+        Args:
+            test_name: 테스트 함수 이름
+            description: 테스트 설명
+            test_file_path: 기존 테스트 파일 경로
+            expected_behavior: 예상 동작
+            tags: 테스트 태그
+        """
+        if tags is None:
+            tags = []
+            
+        # 중복 테스트 이름 확인
+        for existing_test in self.unit_tests:
+            if existing_test.get("test_name") == test_name:
+                logger.warning(f"테스트 이름 '{test_name}'이 이미 존재합니다. 업데이트합니다.")
+                # test_code 필드가 있으면 제거 (참조 방식으로 변경)
+                if "test_code" in existing_test:
+                    del existing_test["test_code"]
+                existing_test.update({
+                    "description": description,
+                    "test_file_path": test_file_path,
+                    "expected_behavior": expected_behavior,
+                    "tags": tags
+                })
+                return existing_test
+        
+        # 새 테스트 참조 추가
+        new_test = {
+            "test_name": test_name,
+            "description": description,
+            "test_file_path": test_file_path,
+            "expected_behavior": expected_behavior,
+            "tags": tags
+        }
+        self.unit_tests.append(new_test)
+        logger.info(f"새 유닛테스트 참조 추가: {test_name} -> {test_file_path}")
+        return new_test
+    
     def get_unit_test(self, test_name: str) -> Optional[Dict[str, Any]]:
         """특정 이름의 유닛테스트 조회"""
         for test in self.unit_tests:

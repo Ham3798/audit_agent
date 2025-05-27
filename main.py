@@ -1538,262 +1538,373 @@ async def analyze_test_results_by_test(sid: str, test_name: str, run_id: str, in
         return {"error": error_msg}
 
 @mcp.tool()
-async def generate_poc_from_tests(sid: str) -> dict:
+async def generate_poc_code(sid: str, foundry_root_path: str, poc_type: str = "contract") -> dict:
     """
-    🎯 **PoC 통합 생성: 최종 완성된 PoC 코드 자동 생성**
+    🎯 **독립적 PoC 코드 생성: 테스트와 분리된 실제 공격 코드**
     
-    시나리오에 등록된 모든 유닛테스트들을 분석하여 하나의 완성된 통합 PoC 코드를 
-    자동으로 생성하는 도구입니다. 개별 테스트들의 핵심 공격 로직을 결합하여 
-    실제 사용 가능한 최종 PoC 컨트랙트를 만들어냅니다.
+    시나리오와 등록된 테스트들의 인사이트를 바탕으로 **테스트와 완전히 분리된** 
+    독립적인 PoC 코드를 생성하는 도구입니다. 기존 src/ 컨트랙트를 참조하여 
+    실제 공격에 사용할 수 있는 완성된 PoC를 만들어냅니다.
     
     🎯 **PoC 개발에서의 역할**:
-    - 분산된 테스트 케이스들을 하나의 통합 PoC로 결합
-    - 각 테스트의 핵심 공격 로직만 추출하여 최적화된 코드 생성
-    - 실제 공격에 사용할 수 있는 완성된 형태의 PoC 제공
-    - 감사 보고서나 취약점 보고서에 첨부할 수 있는 최종 산출물
+    - 테스트 코드와 완전히 분리된 독립적인 공격 컨트랙트 생성
+    - 기존 src/ 폴더의 컨트랙트 구조를 참조하여 현실적인 PoC 작성
+    - 실제 배포 및 실행 가능한 형태의 공격 코드 제공
+    - script/ 폴더의 배포 스크립트 또는 독립 컨트랙트로 생성 가능
     
     💡 **LLM 활용 가이드**:
-    1. **생성 전 준비사항 확인**:
-       - 모든 핵심 테스트가 성공적으로 실행되었는지 확인
-       - 각 테스트가 서로 다른 공격 벡터를 다루는지 검토
-       - 중복되거나 불필요한 테스트는 제거 고려
+    1. **기존 코드베이스 분석**: src/ 폴더의 취약한 컨트랙트 구조 파악
+    2. **테스트 인사이트 활용**: 등록된 테스트들에서 발견된 취약점 패턴 적용
+    3. **독립적 구현**: 테스트 프레임워크에 의존하지 않는 순수 Solidity 코드
+    4. **실행 가능성 확보**: 실제 네트워크에서 배포/실행 가능한 형태로 작성
     
-    2. **생성된 PoC 검토 포인트**:
-       - 모든 공격 시나리오가 포함되었는지 확인
-       - 코드의 가독성과 실행 가능성 검토
-       - 불필요한 중복 코드나 테스트 전용 코드 제거 필요성 판단
+    🔧 **생성되는 PoC 유형**:
+    - **contract**: 독립적인 공격 컨트랙트 (.sol 파일)
+    - **script**: Foundry 배포 스크립트 (script/ 폴더용)
+    - **exploit**: 완전한 exploit 시나리오 (컨트랙트 + 실행 로직)
     
-    3. **PoC 완성도 평가**:
-       - 실제 공격 상황에서 사용 가능한 수준인지 평가
-       - 추가 최적화나 정리가 필요한 부분 식별
-       - 문서화 및 주석 추가 필요성 검토
-    
-    🔧 **생성되는 PoC 구조**:
-    - 헤더: 시나리오 정보, 생성 일시, 설명
-    - 각 테스트별 섹션: 테스트명, 설명, 핵심 코드
-    - 통합 주석: 전체 공격 흐름과 주요 포인트 설명
-    - 실행 가이드: PoC 사용 방법 및 주의사항
+    📁 **코드베이스 참조 구조**:
+    - src/ 폴더: 취약한 대상 컨트랙트들
+    - test/ 폴더: 등록된 테스트들의 공격 패턴
+    - script/ 폴더: 배포 및 실행 스크립트들
     
     🔄 **생성 후 권장 워크플로우**:
-    1. **PoC 검토 및 테스트**:
-       - 생성된 PoC 코드를 별도 환경에서 실행 테스트
-       - 예상대로 작동하는지 검증
-    
-    2. **최적화 및 정리**:
-       - 불필요한 코드 제거
-       - 주석 및 문서화 개선
-       - 가스 효율성 최적화
-    
-    3. **최종 검증**:
-       - 다양한 환경에서 PoC 실행 테스트
-       - 방어 메커니즘 우회 여부 확인
-       - 실제 공격 시나리오와의 일치성 검토
-    
-    4. **문서화 및 보고**:
-       - PoC 사용법 문서 작성
-       - 취약점 영향도 및 해결 방안 정리
-       - 감사 보고서 또는 버그 바운티 제출 준비
+    1. **코드 검토**: 생성된 PoC의 로직과 구조 확인
+    2. **의존성 확인**: import 구문과 컨트랙트 참조 검증
+    3. **컴파일 테스트**: forge build로 컴파일 가능성 확인
+    4. **배포 테스트**: 테스트넷에서 실제 배포 및 실행 검증
+    5. **문서화**: PoC 사용법과 공격 시나리오 문서 작성
     
     Args:
-        sid: 시나리오 ID (유닛테스트들이 등록된 시나리오)
+        sid: 시나리오 ID
+        foundry_root_path: Foundry 프로젝트 루트 경로
+        poc_type: PoC 유형 ("contract", "script", "exploit")
     
     Returns:
-        dict: PoC 생성 결과 및 통합 코드
+        dict: PoC 생성 결과
         - success: 생성 성공 여부
         - message: 생성 결과 메시지
-        - poc_contract: 생성된 통합 PoC 코드 (Solidity)
-        - test_count: 통합된 테스트 수
+        - poc_code: 생성된 PoC 코드 (Solidity)
+        - file_path: 저장된 파일 경로
+        - poc_type: 생성된 PoC 유형
+        - dependencies: 필요한 의존성 목록
     
     📋 **사용 예시**:
     ```python
-    # 모든 테스트 완료 후 최종 PoC 생성
-    poc_result = await generate_poc_from_tests("REENTRANCY_ATTACK_001")
+    # 독립적인 공격 컨트랙트 생성
+    poc_result = await generate_poc_code(
+        sid="REENTRANCY_ATTACK_001",
+        foundry_root_path="/path/to/foundry/project",
+        poc_type="contract"
+    )
     
     if poc_result["success"]:
-        print("🎉 PoC 생성 완료!")
-        print(f"통합된 테스트 수: {poc_result['test_count']}")
+        print("🎉 독립적 PoC 코드 생성 완료!")
+        print(f"파일 경로: {poc_result['file_path']}")
+        print(f"PoC 유형: {poc_result['poc_type']}")
         
         # 생성된 PoC 코드 확인
-        poc_code = poc_result["poc_contract"]
         print("생성된 PoC 코드:")
-        print(poc_code)
+        print(poc_result["poc_code"])
         
-        # 파일로 저장하여 별도 테스트 진행
-        with open("FinalPoC.sol", "w") as f:
-            f.write(poc_code)
-            
+        # 컴파일 테스트
+        # forge build
+        
     else:
         print("❌ PoC 생성 실패")
         print(poc_result.get("message", "알 수 없는 오류"))
     ```
     
     ⚠️ **주의사항**:
-    - 유닛테스트가 없는 시나리오에서는 생성 불가
-    - 생성된 PoC는 반드시 별도 환경에서 검증 필요
-    - 실제 메인넷에서 사용 시 법적/윤리적 책임 고려 필요
+    - 기존 src/ 컨트랙트 구조를 정확히 참조해야 함
+    - 생성된 PoC는 반드시 컴파일 및 배포 테스트 필요
+    - 실제 메인넷 사용 시 법적/윤리적 책임 고려 필요
     
-    ✅ **성공 시**: 완성된 PoC 코드 제공, 최종 검증 및 문서화 단계로 진행
-    ❌ **실패 시**: 테스트 부족, 코드 오류 등의 구체적 원인 제시
+    ✅ **성공 시**: 독립적 PoC 코드 제공, 컴파일 및 배포 테스트 단계로 진행
+    ❌ **실패 시**: 코드베이스 분석 실패, 생성 오류 등의 구체적 원인 제시
     """
-    logger.info(f"[generate_poc_from_tests] 호출: sid={sid}")
+    logger.info(f"[generate_poc_code] 호출: sid={sid}, poc_type={poc_type}")
     
     doc = load_scenario(sid)
     if not doc:
         return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
     
-    if not doc.unit_tests:
-        return {"error": f"시나리오 {sid}에 유닛테스트가 없습니다."}
-    
     try:
-        # 모든 테스트 코드를 결합하여 PoC 생성
-        poc_parts = []
-        poc_parts.append("// === 통합 PoC 코드 ===")
-        poc_parts.append(f"// 시나리오: {doc.meta.get('title', sid)}")
-        poc_parts.append(f"// 생성일: {datetime.datetime.utcnow().isoformat()}")
-        poc_parts.append("")
+        # 1. 기존 src/ 폴더 분석
+        src_path = os.path.join(foundry_root_path, "src")
+        if not os.path.exists(src_path):
+            return {"error": f"src 폴더가 존재하지 않습니다: {src_path}"}
         
-        for i, test in enumerate(doc.unit_tests):
-            test_name = test.get("test_name", f"test_{i}")
-            description = test.get("description", "")
-            test_code = test.get("test_code", "")
-            
-            poc_parts.append(f"    // {test_name}: {description}")
-            poc_parts.append(f"    {test_code}")
-            poc_parts.append("")
+        # src 폴더의 컨트랙트 파일들 스캔
+        contract_files = []
+        for file in os.listdir(src_path):
+            if file.endswith('.sol'):
+                contract_files.append(file)
         
-        poc_contract = "\n".join(poc_parts)
+        if not contract_files:
+            return {"error": f"src 폴더에 Solidity 파일이 없습니다: {src_path}"}
         
-        # code 섹션 업데이트
+        # 2. 등록된 테스트들의 인사이트 수집
+        test_insights = []
+        if hasattr(doc, 'test_insights') and doc.test_insights:
+            test_insights = doc.test_insights[-3:]  # 최근 3개 인사이트만
+        
+        # 3. 시나리오 메타 정보
+        scenario_info = {
+            "id": doc.meta.get("id", sid),
+            "title": doc.meta.get("title", ""),
+            "category": doc.meta.get("category", ""),
+            "severity": doc.meta.get("severity", "")
+        }
+        
+        # 4. PoC 코드 생성
+        poc_code = generate_poc_template(
+            scenario_info=scenario_info,
+            contract_files=contract_files,
+            test_insights=test_insights,
+            poc_type=poc_type,
+            foundry_root_path=foundry_root_path
+        )
+        
+        # 5. 파일 저장
+        if poc_type == "script":
+            output_dir = os.path.join(foundry_root_path, "script")
+            file_name = f"{sid}_Exploit.s.sol"
+        else:
+            output_dir = os.path.join(foundry_root_path, "src")
+            file_name = f"{sid}_PoC.sol"
+        
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, file_name)
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(poc_code)
+        
+        # 6. 시나리오 업데이트
         if not hasattr(doc, 'code') or not isinstance(doc.code, dict):
             doc.code = {}
         
-        doc.code["poc_contract"] = poc_contract
-        doc.code["target_contract_name"] = doc.meta.get("id", sid)
+        doc.code["poc_contract"] = poc_code
+        doc.code["poc_file_path"] = file_path
+        doc.code["poc_type"] = poc_type
+        doc.code["target_contract_name"] = scenario_info["id"]
         
         save_scenario(doc)
         
-        logger.info(f"PoC 코드 생성 완료: sid={sid}")
+        logger.info(f"독립적 PoC 코드 생성 완료: sid={sid}, file={file_path}")
         return {
             "success": True,
-            "message": f"시나리오 {sid}의 PoC 코드가 생성되었습니다.",
-            "poc_contract": poc_contract,
-            "test_count": len(doc.unit_tests)
+            "message": f"독립적 PoC 코드가 생성되었습니다: {file_path}",
+            "poc_code": poc_code,
+            "file_path": file_path,
+            "poc_type": poc_type,
+            "dependencies": contract_files
         }
     except Exception as e:
         error_msg = f"PoC 코드 생성 중 오류: {str(e)}"
         logger.error(error_msg)
         return {"error": error_msg}
 
+def generate_poc_template(scenario_info: dict, contract_files: list, test_insights: list, poc_type: str, foundry_root_path: str) -> str:
+    """PoC 코드 템플릿 생성"""
+    
+    # 기본 헤더
+    header = f"""// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @title {scenario_info['title']} PoC
+ * @dev 시나리오 ID: {scenario_info['id']}
+ * @dev 카테고리: {scenario_info['category']}
+ * @dev 심각도: {scenario_info['severity']}
+ * @dev 생성일: {datetime.datetime.utcnow().isoformat()}
+ * 
+ * 이 PoC는 테스트와 분리된 독립적인 공격 코드입니다.
+ * 실제 취약점 검증 및 보안 연구 목적으로만 사용하세요.
+ */
+"""
+    
+    # Import 구문 생성
+    imports = []
+    for contract_file in contract_files:
+        contract_name = contract_file.replace('.sol', '')
+        imports.append(f'import "../src/{contract_file}";')
+    
+    if poc_type == "script":
+        imports.append('import "forge-std/Script.sol";')
+        imports.append('import "forge-std/console.sol";')
+    
+    import_section = "\n".join(imports)
+    
+    # 인사이트 기반 주석 생성
+    insights_comments = []
+    if test_insights:
+        insights_comments.append("/**")
+        insights_comments.append(" * 테스트에서 발견된 주요 인사이트:")
+        for i, insight in enumerate(test_insights):
+            if isinstance(insight, dict):
+                patterns = insight.get('patterns', '정보 없음')
+                security_implications = insight.get('security_implications', '정보 없음')
+                insights_comments.append(f" * {i+1}. 패턴: {patterns}")
+                insights_comments.append(f" *    보안 영향: {security_implications}")
+        insights_comments.append(" */")
+    
+    insights_section = "\n".join(insights_comments) if insights_comments else ""
+    
+    # PoC 유형별 코드 생성
+    if poc_type == "script":
+        main_code = f"""
+contract {scenario_info['id']}ExploitScript is Script {{
+    function run() external {{
+        vm.startBroadcast();
+        
+        // TODO: 실제 공격 로직 구현
+        // 1. 대상 컨트랙트 주소 설정
+        // 2. 공격 컨트랙트 배포
+        // 3. 공격 실행
+        // 4. 결과 확인
+        
+        console.log("PoC 실행 완료");
+        
+        vm.stopBroadcast();
+    }}
+}}"""
+    else:
+        main_code = f"""
+contract {scenario_info['id']}PoC {{
+    // TODO: 필요한 상태 변수 선언
+    
+    constructor() {{
+        // TODO: 초기화 로직
+    }}
+    
+    function exploit() external {{
+        // TODO: 실제 공격 로직 구현
+        // 기존 src/ 컨트랙트들을 참조하여 구현하세요
+    }}
+    
+    function verify() external view returns (bool) {{
+        // TODO: 공격 성공 여부 확인 로직
+        return true;
+    }}
+}}"""
+    
+    # 전체 코드 조합
+    full_code = f"""{header}
+
+{import_section}
+
+{insights_section}
+
+{main_code}
+"""
+    
+    return full_code
+
 ################################################################################
 # 새로 추가: n개 유닛테스트 관리 도구들
 ################################################################################
 
 @mcp.tool()
-async def add_unit_test(sid: str, test_name: str, description: str, test_code: str, expected_behavior: str = "", tags: List[str] = None) -> dict:
+async def add_unit_test(sid: str, test_name: str, description: str, test_file_path: str, expected_behavior: str = "", tags: List[str] = None) -> dict:
     """
-    🧪 **PoC 테스트 케이스 확장: 새로운 공격 시나리오 추가**
+    🧪 **PoC 테스트 케이스 등록: 기존 유닛테스트 연결**
     
-    등록된 시나리오에 새로운 유닛테스트를 추가하여 PoC의 완성도를 높이는 도구입니다.
-    각 테스트는 취약점의 서로 다른 측면이나 공격 벡터를 검증하며, 
-    최종적으로 모든 테스트가 통합되어 완전한 PoC 코드를 구성합니다.
+    등록된 시나리오에 **이미 존재하는** 유닛테스트를 연결하여 PoC 검증 체계를 구축하는 도구입니다.
+    이 도구는 새로운 테스트 코드를 생성하지 않고, 기존 코드베이스의 테스트를 시나리오에 등록합니다.
     
     🎯 **PoC 개발에서의 역할**:
-    - 기본 공격 시나리오부터 복잡한 엣지 케이스까지 단계적 확장
-    - 각 테스트는 독립적으로 실행 가능하면서도 전체 PoC의 일부
-    - 다양한 공격 벡터를 체계적으로 검증하여 PoC의 신뢰성 확보
-    - 방어 메커니즘 우회, 상태 조작, 가스 최적화 등 다각도 접근
+    - 기존 테스트 파일에서 관련 테스트 함수를 시나리오에 연결
+    - 실제 존재하는 테스트 코드를 기반으로 한 신뢰성 있는 검증
+    - 코드베이스와 일관성을 유지하며 PoC 검증 체계 구축
+    - 테스트와 PoC 코드를 분리하여 명확한 역할 구분
     
-    💡 **LLM 테스트 설계 가이드**:
-    1. **기본 공격**: 가장 단순한 형태의 취약점 악용
-    2. **엣지 케이스**: 경계값, 특수 상황에서의 동작 검증
-    3. **방어 우회**: 기존 보안 메커니즘을 우회하는 방법
-    4. **상태 조작**: 컨트랙트 상태를 조작하여 취약점 확대
-    5. **가스 최적화**: 실제 공격에서 사용 가능한 효율적 방법
-    6. **복합 공격**: 여러 취약점을 조합한 고급 공격 시나리오
+    💡 **LLM 사용 가이드**:
+    1. **기존 테스트 파일 확인**: test/ 폴더의 실제 테스트 파일 경로 지정
+    2. **테스트 함수 식별**: 파일 내의 특정 test_ 함수명 지정
+    3. **테스트 목적 명시**: 해당 테스트가 검증하는 취약점 측면 설명
+    4. **태그 분류**: 테스트의 성격과 중요도에 따른 태그 부여
     
     🏷️ **효과적인 태그 활용**:
-    - "basic_attack": 기본적인 공격 시나리오
+    - "existing_test": 기존 코드베이스의 테스트
+    - "vulnerability_test": 취약점 검증 테스트
     - "edge_case": 경계값이나 특수 상황 테스트
-    - "bypass": 방어 메커니즘 우회 테스트
-    - "state_manipulation": 상태 조작 관련 테스트
-    - "gas_optimized": 가스 효율성을 고려한 테스트
-    - "complex": 복합적인 공격 시나리오
-    - "poc_critical": PoC의 핵심이 되는 중요 테스트
+    - "security_critical": 보안상 중요한 테스트
+    - "poc_validation": PoC 검증용 테스트
     
-    📝 **테스트 코드 작성 팁**:
-    - Solidity 함수 형태로 작성 (function test_xxx() public {})
-    - vm.expectRevert() 또는 성공 시나리오에 따른 적절한 assertion 사용
-    - console.log()로 실행 과정 추적 가능하게 작성
-    - 명확한 주석으로 공격 단계별 설명 포함
+    📁 **파일 경로 예시**:
+    - "test/VulnerableContract.t.sol" (상대 경로)
+    - "/absolute/path/to/test/SecurityTest.t.sol" (절대 경로)
+    - "test/generated/ExploitTest.t.sol" (생성된 테스트)
     
     🔄 **다음 단계 워크플로우**:
-    1. execute_unit_test로 새로 추가한 테스트 실행
+    1. execute_unit_test로 등록된 테스트 실행
     2. get_test_logs로 실행 결과 상세 분석
     3. analyze_test_results_by_test로 인사이트 도출
-    4. 필요시 추가 테스트 케이스 설계 및 추가
-    5. 모든 테스트 완료 후 generate_poc_from_tests로 통합 PoC 생성
+    4. 필요시 추가 기존 테스트 등록
+    5. 별도로 generate_poc_code로 독립적인 PoC 코드 생성
     
     Args:
         sid: 시나리오 ID (기존에 등록된 시나리오여야 함)
-        test_name: 테스트 함수 이름 (예: "test_basic_reentrancy_attack")
+        test_name: 테스트 함수 이름 (예: "test_reentrancy_attack")
         description: 테스트의 목적과 검증 내용 설명
-        test_code: Solidity 테스트 함수 코드
+        test_file_path: 기존 테스트 파일의 경로 (상대 또는 절대 경로)
         expected_behavior: 예상되는 실행 결과 (성공/실패/특정 상태 변화 등)
         tags: 테스트 분류를 위한 태그 목록
     
     Returns:
-        dict: 테스트 추가 결과 및 현재 테스트 목록 정보
+        dict: 테스트 등록 결과 및 현재 테스트 목록 정보
         
     📋 **사용 예시**:
     ```python
     await add_unit_test(
         sid="REENTRANCY_ATTACK_001",
-        test_name="test_basic_reentrancy",
-        description="기본적인 reentrancy 공격으로 토큰 이중 인출",
-        test_code='''
-        function test_basic_reentrancy() public {
-            // 공격자 컨트랙트 배포
-            AttackerContract attacker = new AttackerContract(address(vulnerableToken));
-            
-            // 초기 잔액 설정
-            vulnerableToken.mint(address(attacker), 1000 ether);
-            
-            // 공격 실행
-            attacker.attack();
-            
-            // 결과 검증: 예상보다 많은 토큰 획득
-            assertGt(attacker.stolenAmount(), 1000 ether);
-        }
-        ''',
+        test_name="test_reentrancy_exploit",
+        description="기존 테스트 파일의 reentrancy 공격 검증 테스트",
+        test_file_path="test/ReentrancyTest.t.sol",
         expected_behavior="공격자가 초기 잔액보다 많은 토큰을 획득함",
-        tags=["basic_attack", "reentrancy", "poc_critical"]
+        tags=["existing_test", "vulnerability_test", "poc_validation"]
     )
     ```
     
-    ✅ **성공 시**: 테스트 추가 완료, 다음 테스트 실행 준비
-    ❌ **실패 시**: 시나리오 없음, 중복 테스트명 등의 에러 메시지
+    ✅ **성공 시**: 기존 테스트 등록 완료, 테스트 실행 준비
+    ❌ **실패 시**: 파일 없음, 중복 테스트명 등의 에러 메시지
     """
-    logger.info(f"[add_unit_test] 호출: sid={sid}, test_name={test_name}")
+    logger.info(f"[add_unit_test] 호출: sid={sid}, test_name={test_name}, test_file_path={test_file_path}")
     
     doc = load_scenario(sid)
     if not doc:
         return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
     
+    # 테스트 파일 존재 확인
+    if not os.path.exists(test_file_path):
+        return {"error": f"테스트 파일이 존재하지 않습니다: {test_file_path}"}
+    
     try:
         if tags is None:
             tags = []
         
-        new_test = doc.add_unit_test(test_name, description, test_code, expected_behavior, tags)
+        # 기존 테스트 파일에서 코드 읽기
+        with open(test_file_path, 'r', encoding='utf-8') as f:
+            file_content = f.read()
+        
+        # 특정 테스트 함수가 파일에 존재하는지 확인
+        if f"function {test_name}" not in file_content:
+            return {"error": f"테스트 함수 '{test_name}'이 파일 {test_file_path}에서 찾을 수 없습니다."}
+        
+        # 테스트 정보를 시나리오에 등록 (파일 경로 포함)
+        new_test = doc.add_unit_test_reference(test_name, description, test_file_path, expected_behavior, tags)
         save_scenario(doc)
         
-        logger.info(f"유닛테스트 추가 완료: sid={sid}, test_name={test_name}")
+        logger.info(f"기존 유닛테스트 등록 완료: sid={sid}, test_name={test_name}, file={test_file_path}")
         return {
             "success": True,
-            "message": f"유닛테스트 '{test_name}'이 시나리오 {sid}에 추가되었습니다.",
-            "test_info": new_test
+            "message": f"기존 유닛테스트 '{test_name}'이 시나리오 {sid}에 등록되었습니다.",
+            "test_info": new_test,
+            "file_path": test_file_path
         }
     except Exception as e:
-        error_msg = f"유닛테스트 추가 중 오류: {str(e)}"
+        error_msg = f"유닛테스트 등록 중 오류: {str(e)}"
         logger.error(error_msg)
         return {"error": error_msg}
 
