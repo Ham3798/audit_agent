@@ -1,7 +1,7 @@
 """
-schema_validator.py 테스트 모듈
+validation 패키지 테스트 모듈
 
-SchemaValidator 클래스의 모든 기능을 테스트합니다.
+validation 패키지의 모든 기능을 테스트합니다.
 - 스키마 로드 및 검증
 - 버전별 검증 로직
 - 힌트 추출 기능
@@ -17,7 +17,8 @@ from unittest.mock import patch, MagicMock
 
 import sys
 sys.path.append('..')
-from schema_validator import SchemaValidator, validate_scenario, extract_hints
+from validation import validate_scenario, extract_hints
+from validation.schema_v1_validator import SchemaV1Validator
 
 
 class TestSchemaValidator:
@@ -134,7 +135,7 @@ class TestSchemaValidator:
         self.temp_schema_file.close()
         
         # SchemaValidator 인스턴스 생성
-        self.validator = SchemaValidator(self.temp_schema_file.name)
+        self.validator = SchemaV1Validator(self.temp_schema_file.name)
         
         # 테스트용 시나리오 데이터 (실제 검증 로직에 맞게 완전한 구조)
         self.valid_scenario = {
@@ -205,7 +206,7 @@ class TestSchemaValidator:
     
     def test_load_schema_nonexistent_file(self):
         """존재하지 않는 스키마 파일 로드 테스트"""
-        validator = SchemaValidator("/nonexistent/schema.yaml")
+        validator = SchemaV1Validator("/nonexistent/schema.yaml")
         
         with pytest.raises(ValueError):
             validator.load_schema()
@@ -218,7 +219,7 @@ class TestSchemaValidator:
         invalid_yaml_file.close()
         
         try:
-            validator = SchemaValidator(invalid_yaml_file.name)
+            validator = SchemaV1Validator(invalid_yaml_file.name)
             with pytest.raises(ValueError):
                 validator.load_schema()
         finally:
@@ -437,7 +438,7 @@ class TestSchemaValidatorFunctions:
             "test_code_snapshots": {}
         }
     
-    @patch('schema_validator.SchemaValidator')
+    @patch('validation.schema_v1_validator.SchemaV1Validator')
     def test_validate_scenario_function(self, mock_validator_class):
         """validate_scenario 함수 테스트"""
         # Mock 설정
@@ -459,7 +460,7 @@ class TestSchemaValidatorFunctions:
         # 실제로는 schema_path 없이 호출됨
         mock_validator.validate.assert_called_once_with(self.test_scenario)
     
-    @patch('schema_validator.SchemaValidator')
+    @patch('validation.schema_v1_validator.SchemaV1Validator')
     def test_extract_hints_function(self, mock_validator_class):
         """extract_hints 함수 테스트"""
         # Mock 설정
@@ -500,7 +501,7 @@ class TestSchemaValidatorEdgeCases:
         yaml.dump(self.minimal_schema, self.minimal_schema_file, allow_unicode=True)
         self.minimal_schema_file.close()
         
-        self.validator = SchemaValidator(self.minimal_schema_file.name)
+        self.validator = SchemaV1Validator(self.minimal_schema_file.name)
     
     def teardown_method(self):
         """각 테스트 후 실행되는 정리"""
@@ -599,7 +600,7 @@ class TestSchemaValidatorEdgeCases:
         no_version_file.close()
         
         try:
-            validator = SchemaValidator(no_version_file.name)
+            validator = SchemaV1Validator(no_version_file.name)
             scenario = {"meta": {"id": "NO_VERSION_TEST"}}
             
             result = validator.validate(scenario)
@@ -676,7 +677,7 @@ class TestSchemaValidatorIntegration:
         yaml.dump(self.complete_schema, self.schema_file, allow_unicode=True)
         self.schema_file.close()
         
-        self.validator = SchemaValidator(self.schema_file.name)
+        self.validator = SchemaV1Validator(self.schema_file.name)
     
     def teardown_method(self):
         """각 테스트 후 실행되는 정리"""

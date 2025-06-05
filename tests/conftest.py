@@ -71,11 +71,11 @@ def isolated_db():
     temp_db = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
     temp_db.close()
     
-    # db_manager의 _DB 변수를 임시 DB로 패치
-    with patch('db_manager._DB', temp_db.name):
+    # database.manager의 _DB 변수를 임시 DB로 패치
+    with patch('database.manager._DB', temp_db.name):
         # DB 초기화 함수 호출
-        import db_manager
-        db_manager.init_db()
+        from database.manager import init_db
+        init_db()
         yield temp_db.name
     
     # 테스트 후 임시 DB 삭제

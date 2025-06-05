@@ -18,8 +18,9 @@ from unittest.mock import patch, MagicMock
 # 테스트용 임시 DB 설정
 import sys
 sys.path.append('..')
-from db_manager import (
-    ScenarioDoc, save_scenario, load_scenario, update_scenario_partial,
+from database.models import ScenarioDoc
+from database.manager import (
+    save_scenario, load_scenario, update_scenario_partial,
     delete_scenario, list_ids, add_runlog_entry, init_db
 )
 

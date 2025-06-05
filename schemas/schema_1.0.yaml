@@ -1,4 +1,4 @@
-# scenario schema v1.3.0
+# scenario schema v1.4.0
 # 
 # [핵심 아키텍처 변화: 1 시나리오 = 1 PoC + n개 유닛테스트]
 # - 기존: 1 시나리오 = 1 테스트 컨트랙트 구조
@@ -16,7 +16,7 @@
 # - test_code_snapshots 필드 유지 (기존 호환성)
 # - 새로운 필드들은 선택적으로 처리
 
-schema_version: "scenario-schema-1.0"
+schema_version: "scenario-schema-1.4"
 
 ###############################################################################
 # L0. META – 고정 식별자
@@ -27,8 +27,8 @@ meta:
   category    : ""                        # 예: "Spoofing"
   severity    : ""                        # 예: "critical"
   tags        : []                        # 예: [ hooks, pool ]
-  author      : ""                        # 작성자
-  created     : ""                        # ISO8601: "YYYY-MM-DDTHH:MM:SS+TZ"
+  author      : ""                        # 작성자 (선택적)
+  created     : ""                        # ISO8601: "YYYY-MM-DDTHH:MM:SS+TZ" (선택적)
 
 ###############################################################################
 # L1. SPEC – 위협 모델링 기반 구조화 시나리오
@@ -44,16 +44,16 @@ spec:
   assets:
     - name: "Hook"
       type: "address"
+      critical: false                      # 자산의 중요도 (선택적)
       
   components:
     - name: "PoolManager"
       type: "contract"
       deployed_at: "0x..."
 
-  trust_boundaries:
-    - from: "user"
-      to: "PoolManager"
-      enforcement: "msg.sender check"
+  attack_vectors: []                        # 공격 벡터 목록 (문자열 배열)
+
+  trust_boundaries: []                      # 문자열 배열 또는 객체 배열 모두 지원
 
   data_flows:
     - source: "user"
@@ -84,6 +84,9 @@ code:
   poc_contract: ""                        # PoC 컨트랙트 코드 (Solidity)
   target_contract_name: ""                # 대상 컨트랙트 이름
   deployment_script: ""                   # 배포 스크립트 (선택적)
+  
+  vulnerable_functions: []                # 취약한 함수 목록 (선택적)
+  vulnerability_pattern: ""              # 취약점 패턴 설명 (선택적)
 
 unit_tests:
   - test_name: ""                         # 테스트 함수 이름 (예: "test_InvalidHookRevert")
@@ -93,19 +96,31 @@ unit_tests:
     tags: []                              # 테스트 태그 (예: ["revert", "security"])
 
 ###############################################################################
-# L2. HINTS – 컴파일러/정적 분석/런타임 힌트
+# L2. HINTS – 컴파일러/정적 분석/런타임 힌트 (확장된 구조)
 ###############################################################################
 hints:
   compiler:
     errors        : []                   # solc 에러 메시지 리스트
-    warnings      : []                   # solc 경고 메시지 리스트 (실제로는 errors에 포함될 수 있음)
+    warnings      : []                   # solc 경고 메시지 리스트
 
   runtime:
     last_run_id     : ""                 # runlog[-1].run_id
-    revert_info     : ""                 # 실제 Revert 메시지 (문자열 또는 첫번째 Revert 라인)
+    revert_info     : ""                 # 실제 Revert 메시지
     decoded_logs    : []                 # console.log 또는 이벤트 메시지
+    
   gas:
     used     : 0                         # 마지막 실행 gas
+
+  vulnerability_details:
+    root_cause: ""                       # 근본 원인
+    attack_flow: ""                      # 공격 흐름
+    impact: ""                           # 영향도
+    
+  mitigation:
+    reentrancy_guard: ""                 # 재진입 방어
+    checks_effects_interactions: ""      # CEI 패턴
+    pull_over_push: ""                   # Pull over Push 패턴
+    additional_measures: []              # 추가 완화 방안
 
 ###############################################################################
 # L3. PATCHES – 코드/계획 수정 이력 (append-only)
