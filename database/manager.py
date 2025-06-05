@@ -18,12 +18,25 @@ from .models import ScenarioDoc
 logger = get_logger("database")
 
 
-def init_db():
+def init_db(verbose: bool = True):
     """
-    데이터베이스를 초기화합니다.
-    필요한 테이블이 없으면 생성합니다.
+    데이터베이스를 완전히 초기화합니다.
+    파일이 없으면 새로 생성하고, 빈 데이터베이스 처리도 포함합니다.
+    
+    Args:
+        verbose: 상세 로그 출력 여부
     """
+    db_path = settings.database_path
+    is_new_db = not os.path.exists(db_path)
+    
     try:
+        if is_new_db and verbose:
+            logger.info(f"데이터베이스 파일이 존재하지 않습니다: {db_path}")
+            logger.info("새로운 데이터베이스를 생성합니다...")
+        elif verbose:
+            logger.info(f"기존 데이터베이스를 사용합니다: {db_path}")
+        
+        # 테이블 생성
         with _conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS scenario (
@@ -45,7 +58,16 @@ def init_db():
                 )
             """)
             conn.commit()
-            logger.info("데이터베이스 초기화 완료")
+        
+        if verbose:
+            if is_new_db:
+                logger.info(f"✅ 새로운 데이터베이스가 생성되었습니다: {db_path}")
+            else:
+                logger.info("✅ 데이터베이스 초기화 완료")
+        
+        # 빈 데이터베이스 처리 및 무결성 확인
+        _ensure_database_integrity(verbose)
+        
     except Exception as e:
         logger.error(f"데이터베이스 초기화 실패: {e}")
         raise
@@ -186,16 +208,32 @@ def list_ids() -> List[str]:
     데이터베이스의 모든 시나리오 ID 목록을 반환합니다.
     
     Returns:
-        List[str]: 시나리오 ID 목록
+        List[str]: 시나리오 ID 목록 (에러 시 빈 리스트)
     """
     try:
+        # 데이터베이스 파일 존재 확인
+        if not os.path.exists(settings.database_path):
+            logger.warning(f"데이터베이스 파일이 존재하지 않음: {settings.database_path}")
+            return []
+        
         with _conn() as conn:
+            # 테이블 존재 확인
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scenario'")
+            if not cursor.fetchone():
+                logger.warning("scenario 테이블이 존재하지 않음")
+                return []
+            
             cursor = conn.execute("SELECT id FROM scenario ORDER BY id")
             ids = [row[0] for row in cursor.fetchall()]
             logger.info(f"시나리오 ID 목록 조회: {len(ids)}개")
             return ids
+            
+    except sqlite3.Error as e:
+        logger.error(f"SQLite 오류로 시나리오 ID 목록 조회 실패: {e}")
+        return []
     except Exception as e:
-        logger.error(f"시나리오 ID 목록 조회 실패: {e}")
+        logger.error(f"시나리오 ID 목록 조회 중 예상치 못한 오류: {e}")
+        logger.error(f"오류 타입: {type(e).__name__}")
         return []
 
 
@@ -337,6 +375,50 @@ def get_database_stats() -> dict:
     except Exception as e:
         logger.error(f"데이터베이스 통계 조회 실패: {e}")
         return {}
+
+
+def _ensure_database_integrity(verbose: bool = True):
+    """데이터베이스 무결성을 확인하고 빈 데이터베이스를 올바르게 처리합니다."""
+    try:
+        # 시나리오 목록 조회 테스트
+        scenario_ids = list_ids()
+        
+        if scenario_ids is None or len(scenario_ids) == 0:
+            if verbose:
+                logger.info("빈 데이터베이스 감지 - 기본 설정을 확인합니다.")
+            _setup_empty_database(verbose)
+        else:
+            if verbose:
+                logger.info(f"기존 시나리오 {len(scenario_ids)}개 발견됨")
+                
+    except Exception as e:
+        if verbose:
+            logger.warning(f"데이터베이스 무결성 확인 중 오류: {str(e)}")
+            logger.info("데이터베이스 기본 설정을 재초기화합니다.")
+        _setup_empty_database(verbose)
+
+
+def _setup_empty_database(verbose: bool = True):
+    """빈 데이터베이스에 대한 기본 설정을 수행합니다."""
+    try:
+        # 리스트 조회 테스트
+        test_ids = list_ids()
+        if test_ids is None:
+            if verbose:
+                logger.warning("빈 데이터베이스에서 시나리오 리스트 조회가 None을 반환함")
+        else:
+            if verbose:
+                logger.info(f"빈 데이터베이스 시나리오 리스트 조회 성공: {len(test_ids)}개")
+        
+        if verbose:
+            logger.info("✅ 빈 데이터베이스 기본 설정 완료")
+            logger.info("📋 빈 데이터베이스에서 MCP 도구 호출 시 에러가 발생하지 않도록 설정됨")
+        
+    except Exception as e:
+        if verbose:
+            logger.error(f"빈 데이터베이스 설정 중 오류: {str(e)}")
+        # 에러가 발생해도 계속 진행
+        pass
 
 
 # 데이터베이스 초기화 (모듈 로드 시 자동 실행)

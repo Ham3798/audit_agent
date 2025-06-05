@@ -712,15 +712,13 @@ class TestService:
             }
         
         try:
-            # 4. 테스트 파일 경로에서 컨트랙트 이름 추출
-            test_file_path = test_info.get("file_path", "")
-            if test_file_path:
-                contract_name = os.path.basename(test_file_path).replace('.t.sol', '').replace('.sol', '')
-            else:
-                # 기본 컨트랙트 이름 생성
-                contract_name = f"{sid}Test"
+            # 4. 테스트 파일에서 실제 컨트랙트 이름 추출
+            test_file_path = test_info.get("test_file_path", "")
+            self.logger.info(f"INFO: test_info keys: {list(test_info.keys())}")
+            self.logger.info(f"INFO: test_file_path: '{test_file_path}'")
+            contract_name = self._extract_contract_name_from_file(test_file_path, sid)
             
-            self.logger.info(f"추출된 컨트랙트 이름: {contract_name}")
+            self.logger.info(f"추출된 컨트랙트 이름: {contract_name} (파일: {test_file_path})")
             
             # 5. 개선된 Foundry 테스트 실행 (AccessControl, 타입 변환, 함수 시그니처 문제 자동 해결)
             success, stdout, stderr = self.forge_tool.runUnitTest(
@@ -773,6 +771,99 @@ class TestService:
             error_msg = f"유닛테스트 실행 중 오류: {str(e)}"
             self.logger.error(error_msg)
             return {"error": error_msg, "test_name": test_name, "sid": sid}
+
+    def _extract_contract_name_from_file(self, test_file_path: str, sid: str) -> str:
+        """
+        테스트 파일에서 실제 컨트랙트 이름을 추출합니다.
+        
+        Args:
+            test_file_path: 테스트 파일 경로
+            sid: 시나리오 ID (fallback용)
+            
+        Returns:
+            str: 추출된 컨트랙트 이름
+        """
+        # 기본 fallback 컨트랙트 이름 (파일명 기반)
+        fallback_name = f"{sid}Test"
+        
+        if not test_file_path or not os.path.exists(test_file_path):
+            self.logger.warning(f"테스트 파일이 없어 기본 컨트랙트명 사용: {fallback_name}")
+            return fallback_name
+        
+        try:
+            # 파일 내용 읽기
+            with open(test_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            try:
+                with open(test_file_path, 'r', encoding='latin-1') as f:
+                    content = f.read()
+            except Exception as e:
+                self.logger.warning(f"파일 읽기 실패, 기본 컨트랙트명 사용: {fallback_name}, 오류: {str(e)}")
+                return fallback_name
+        except Exception as e:
+            self.logger.warning(f"파일 읽기 실패, 기본 컨트랙트명 사용: {fallback_name}, 오류: {str(e)}")
+            return fallback_name
+        
+        # Solidity 컨트랙트 선언 패턴 찾기
+        import re
+        
+        # contract 키워드로 시작하는 패턴 찾기 - 더 포괄적인 패턴들
+        contract_patterns = [
+            # 가장 일반적인 패턴들 (우선순위 높음)
+            r'contract\s+(\w+)\s+is\s+[\w\s,]+\s*{',        # contract Name is Something, Other {
+            r'contract\s+(\w+)\s+is\s+\w+\s*{',             # contract Name is Parent {
+            r'contract\s+(\w+Test\w*)\s+is',                # contract SomethingTest is (Test로 끝나는 것 우선)
+            r'contract\s+(\w+AttackTest)\s+is',             # contract SomeAttackTest is
+            r'contract\s+(\w+Test)\s+is',                   # contract SomeTest is
+            r'contract\s+(\w+)\s+is\s+.*Test',              # contract Something is SomeTest
+            r'contract\s+(\w+)\s+is\s+.*test',              # contract Something is sometest (소문자)
+            r'contract\s+(\w+)\s*{',                        # contract Something { (단독)
+        ]
+        
+        for pattern in contract_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+            if matches:
+                # 첫 번째 매치를 사용하되, Test가 포함된 것을 우선
+                for match in matches:
+                    contract_name = match.strip()
+                    self.logger.info(f"파일에서 컨트랙트명 추출: {contract_name} (패턴: {pattern})")
+                    return contract_name
+        
+        # 더 간단한 패턴들로 재시도
+        simple_patterns = [
+            r'contract\s+(\w*Test\w*)',     # Test가 포함된 모든 컨트랙트
+            r'contract\s+(\w+)',            # 모든 컨트랙트
+        ]
+        
+        for pattern in simple_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                # Test가 포함된 것을 우선 선택
+                test_contracts = [m for m in matches if 'test' in m.lower()]
+                if test_contracts:
+                    contract_name = test_contracts[0]
+                    self.logger.info(f"파일에서 컨트랙트명 추출 (간단 패턴): {contract_name}")
+                    return contract_name
+                elif matches:
+                    contract_name = matches[0]
+                    self.logger.info(f"파일에서 컨트랙트명 추출 (간단 패턴): {contract_name}")
+                    return contract_name
+        
+        # 패턴 매칭 실패 시 파일명에서 추출 시도
+        if test_file_path:
+            base_name = os.path.basename(test_file_path)
+            # .t.sol, .sol 확장자 제거
+            contract_from_filename = base_name.replace('.t.sol', '').replace('.sol', '')
+            if contract_from_filename:
+                # 파일명이 Test로 끝나지 않으면 Test 추가
+                if not contract_from_filename.endswith('Test'):
+                    contract_from_filename += 'Test'
+                self.logger.info(f"파일명에서 컨트랙트명 추출: {contract_from_filename}")
+                return contract_from_filename
+        
+        self.logger.warning(f"컨트랙트명 추출 실패, 기본값 사용: {fallback_name}")
+        return fallback_name
     
     def _extract_execution_context(self, stdout: str, stderr: str, success: bool) -> Dict[str, Any]:
         """

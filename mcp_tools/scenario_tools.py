@@ -43,14 +43,37 @@ class ScenarioMCPTools:
             return self.scenario_service.get_scenario(sid)
         
         @mcp_instance.tool()
-        async def list_scenarios(random_string: str = "dummy") -> List[str]:
+        async def list_scenarios(random_string: str = "dummy") -> Dict[str, Any]:
             """
             [MCP 시스템 컨텍스트]
             DB에 저장된 모든 시나리오의 ID 목록을 반환합니다.
             사용자가 검증 대상을 선택하거나 전체 시나리오 현황을 파악하는 데 도움을 줍니다.
             """
-            self.logger.info(f"[list_scenarios] 호출")
-            return self.scenario_service.list_scenarios()
+            try:
+                self.logger.info(f"[list_scenarios] 호출")
+                result = self.scenario_service.list_scenarios()
+                
+                # 결과가 None이거나 예외적인 경우 빈 리스트로 처리
+                if result is None:
+                    self.logger.info("시나리오 목록 조회 결과가 None임 - 빈 리스트로 반환")
+                    return {"scenarios": [], "count": 0}
+                
+                # 결과가 빈 리스트인 경우
+                if len(result) == 0:
+                    self.logger.info("시나리오 목록이 비어있음 - 빈 리스트로 반환")
+                    return {"scenarios": [], "count": 0}
+                
+                self.logger.info(f"시나리오 목록 조회 완료: {len(result)}개")
+                return {"scenarios": result, "count": len(result)}
+                
+            except Exception as e:
+                self.logger.error(f"시나리오 목록 조회 중 예외 발생: {str(e)}")
+                self.logger.error(f"예외 타입: {type(e).__name__}")
+                # 어떤 에러가 발생하더라도 빈 리스트 반환 (MCP 도구가 실패하지 않도록)
+                return {"scenarios": [], "count": 0, "error": str(e)}
+            
+            # 추가 안전장치: 함수 끝에서도 빈 리스트 반환
+            return {"scenarios": [], "count": 0}
         
         @mcp_instance.tool()
         def export_scenario_to_yaml(sid: str, path: str) -> str:
@@ -112,7 +135,7 @@ class ScenarioMCPTools:
             - foundry_root_path: Foundry 프로젝트 디렉토리 경로 (예: "/foundry_project")
             """
             self.logger.info(f"[scenario_context] 호출: sid={sid}, test_contract_name={test_contract_name}, foundry_root_path={foundry_root_path}")
-            return self.scenario_service.scenario_context(sid, test_contract_name, foundry_root_path)
+            return self.scenario_service.get_scenario_context(sid, test_contract_name, foundry_root_path)
         
         @mcp_instance.tool()
         def register_scenario(scenario: dict) -> dict:

@@ -20,9 +20,6 @@ logger = get_logger("main")
 # MCP 서버 초기화
 mcp = FastMCP("audit-agent-mcp")
 
-# 데이터베이스 초기화
-_DB = os.getenv("SCENARIO_DB", "scenario_dyn.db")
-
 def register_all_mcp_tools():
     """모든 MCP 도구들을 등록합니다."""
     # 기존 도구들
@@ -44,6 +41,7 @@ def run_server():
     mcp.run()
 
 if __name__ == "__main__":
+    # 개선된 init_db() 함수가 모든 초기화를 담당
     init_db()
     register_all_mcp_tools()
     run_server()
