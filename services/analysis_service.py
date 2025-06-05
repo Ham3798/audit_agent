@@ -41,23 +41,117 @@ class AnalysisService:
         """
         self.logger.info(f"테스트 결과 분석: sid={sid}, run_id={run_id}, test_name={test_name}")
         
+        # 1. 시나리오 존재 확인
         doc = load_scenario(sid)
         if not doc:
             return {"error": f"시나리오 {sid}가 존재하지 않습니다."}
         
+        # 2. 입력값 기본 검증
+        if not isinstance(insights, dict):
+            return {
+                "error": "insights는 딕셔너리 형태여야 합니다.",
+                "received_type": type(insights).__name__
+            }
+        
+        if not run_id or not run_id.strip():
+            return {"error": "run_id가 비어있습니다."}
+        
         try:
-            # 필수 인사이트 필드 검증
-            required_fields = ["precondition", "state_changes", "patterns", "security_implications"]
-            missing_fields = [field for field in required_fields if field not in insights]
+            # 3. 필수 인사이트 필드 검증 (강화된 검증)
+            required_fields = {
+                "precondition": "테스트의 전제 조건",
+                "state_changes": "관찰된 상태 변화",
+                "patterns": "감지된 패턴",
+                "security_implications": "보안 영향"
+            }
+            
+            # 3a. 필수 필드 존재 여부 확인
+            missing_fields = []
+            empty_fields = []
+            
+            for field, description in required_fields.items():
+                if field not in insights:
+                    missing_fields.append(f"{field} ({description})")
+                elif not insights[field] or (isinstance(insights[field], str) and not insights[field].strip()):
+                    empty_fields.append(f"{field} ({description})")
             
             if missing_fields:
-                return {"error": f"다음 필수 인사이트 필드가 누락되었습니다: {missing_fields}"}
+                return {
+                    "error": f"다음 필수 인사이트 필드가 누락되었습니다: {missing_fields}",
+                    "required_fields": required_fields,
+                    "received_fields": list(insights.keys())
+                }
             
-            # 신뢰도 기본값 설정
+            if empty_fields:
+                return {
+                    "error": f"다음 필수 인사이트 필드가 비어있습니다: {empty_fields}",
+                    "hint": "각 필드에는 의미있는 내용이 포함되어야 합니다."
+                }
+            
+            # 3b. 각 필드의 내용 품질 검증
+            field_validation_errors = []
+            
+            # precondition 검증
+            if len(str(insights["precondition"]).strip()) < 10:
+                field_validation_errors.append("precondition: 최소 10자 이상의 구체적인 설명이 필요합니다.")
+            
+            # state_changes 검증
+            if len(str(insights["state_changes"]).strip()) < 10:
+                field_validation_errors.append("state_changes: 최소 10자 이상의 구체적인 상태 변화 설명이 필요합니다.")
+            
+            # patterns 검증
+            if len(str(insights["patterns"]).strip()) < 10:
+                field_validation_errors.append("patterns: 최소 10자 이상의 패턴 설명이 필요합니다.")
+            
+            # security_implications 검증
+            if len(str(insights["security_implications"]).strip()) < 15:
+                field_validation_errors.append("security_implications: 최소 15자 이상의 상세한 보안 영향 분석이 필요합니다.")
+            
+            if field_validation_errors:
+                return {
+                    "error": "인사이트 필드 내용 품질 검증 실패",
+                    "validation_errors": field_validation_errors,
+                    "hint": "각 필드에는 충분히 상세하고 의미있는 분석 내용이 포함되어야 합니다."
+                }
+            
+            # 4. confidence 필드 검증 및 기본값 설정
             if "confidence" not in insights:
                 insights["confidence"] = 0.5
+                self.logger.info("confidence 필드가 없어 기본값 0.5로 설정")
+            else:
+                confidence = insights["confidence"]
+                
+                # confidence 타입 검증
+                if not isinstance(confidence, (int, float)):
+                    try:
+                        confidence = float(confidence)
+                        insights["confidence"] = confidence
+                    except (ValueError, TypeError):
+                        return {
+                            "error": f"confidence 값은 숫자여야 합니다. 받은 값: {confidence} (타입: {type(confidence).__name__})",
+                            "valid_range": "0.0 ~ 1.0"
+                        }
+                
+                # confidence 범위 검증
+                if not (0.0 <= confidence <= 1.0):
+                    return {
+                        "error": f"confidence 값은 0.0과 1.0 사이여야 합니다. 받은 값: {confidence}",
+                        "valid_range": "0.0 (낮은 신뢰도) ~ 1.0 (높은 신뢰도)",
+                        "hint": "0.0: 매우 불확실, 0.5: 보통, 1.0: 매우 확실"
+                    }
             
-            # 인사이트 저장
+            # 5. 추가 정보 필드 검증 (선택적)
+            if "additional_info" in insights:
+                if isinstance(insights["additional_info"], str) and len(insights["additional_info"].strip()) == 0:
+                    insights["additional_info"] = "추가 정보 없음"
+            else:
+                insights["additional_info"] = "추가 정보 없음"
+            
+            # 6. 타임스탬프 추가
+            from datetime import datetime
+            insights["analysis_timestamp"] = datetime.now().isoformat()
+            
+            # 7. 인사이트 저장
             saved_insight = doc.add_insight(
                 run_id=run_id,
                 insight=insights,
@@ -69,11 +163,20 @@ class AnalysisService:
                 insights_count = len(doc.test_insights)
                 self.logger.info(f"인사이트 저장 완료: sid={sid}, run_id={run_id}, 총 인사이트 수={insights_count}")
                 
+                # 8. 저장된 인사이트 품질 평가
+                quality_score = self._evaluate_insight_quality(insights)
+                
                 return {
                     "success": True,
                     "message": f"시나리오 {sid}에 인사이트가 저장되었습니다.",
                     "insights_count": insights_count,
-                    "saved_insight": saved_insight
+                    "saved_insight": saved_insight,
+                    "insight_quality_score": quality_score,
+                    "validation_summary": {
+                        "all_required_fields_present": True,
+                        "confidence_valid": True,
+                        "content_quality": "validated"
+                    }
                 }
             else:
                 return {"error": "인사이트 저장에 실패했습니다."}
@@ -82,6 +185,114 @@ class AnalysisService:
             error_msg = f"테스트 결과 분석 중 오류: {str(e)}"
             self.logger.error(error_msg)
             return {"error": error_msg}
+    
+    def _evaluate_insight_quality(self, insights: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        저장된 인사이트의 품질을 평가합니다.
+        
+        Args:
+            insights: 인사이트 딕셔너리
+            
+        Returns:
+            Dict[str, Any]: 품질 평가 결과
+        """
+        try:
+            quality_score = 0.0
+            max_score = 5.0
+            
+            # 1. 내용 길이 평가 (1점)
+            total_length = sum(len(str(insights.get(field, ""))) for field in 
+                             ["precondition", "state_changes", "patterns", "security_implications"])
+            if total_length > 200:
+                quality_score += 1.0
+            elif total_length > 100:
+                quality_score += 0.5
+            
+            # 2. 구체성 평가 (1점) - 숫자, 주소, 구체적 용어 포함
+            content = " ".join(str(insights.get(field, "")) for field in insights.keys())
+            specificity_indicators = ["0x", "wei", "gas", "block", "transaction", "address", "uint", "bytes"]
+            specificity_count = sum(1 for indicator in specificity_indicators if indicator.lower() in content.lower())
+            if specificity_count >= 3:
+                quality_score += 1.0
+            elif specificity_count >= 1:
+                quality_score += 0.5
+            
+            # 3. 보안 관련성 평가 (1점)
+            security_keywords = ["vulnerability", "attack", "exploit", "risk", "security", "malicious", "unauthorized"]
+            security_count = sum(1 for keyword in security_keywords if keyword.lower() in content.lower())
+            if security_count >= 2:
+                quality_score += 1.0
+            elif security_count >= 1:
+                quality_score += 0.5
+            
+            # 4. 신뢰도 적정성 평가 (1점)
+            confidence = insights.get("confidence", 0.5)
+            if 0.3 <= confidence <= 0.9:  # 적정 범위
+                quality_score += 1.0
+            elif confidence == 0.0 or confidence == 1.0:  # 극값은 0.5점
+                quality_score += 0.5
+            
+            # 5. 패턴 분석 깊이 평가 (1점)
+            patterns_text = str(insights.get("patterns", ""))
+            if "because" in patterns_text.lower() or "due to" in patterns_text.lower() or "결과" in patterns_text:
+                quality_score += 1.0  # 인과관계 분석 포함
+            elif len(patterns_text) > 50:
+                quality_score += 0.5  # 충분한 길이
+            
+            normalized_score = quality_score / max_score
+            
+            return {
+                "score": round(normalized_score, 2),
+                "grade": self._get_quality_grade(normalized_score),
+                "strengths": self._identify_insight_strengths(insights, quality_score),
+                "improvement_suggestions": self._suggest_insight_improvements(insights, quality_score)
+            }
+        except Exception as e:
+            self.logger.warning(f"인사이트 품질 평가 중 오류: {str(e)}")
+            return {"score": 0.5, "grade": "평가 불가", "error": str(e)}
+    
+    def _get_quality_grade(self, score: float) -> str:
+        """품질 점수를 등급으로 변환"""
+        if score >= 0.9:
+            return "A (매우 우수)"
+        elif score >= 0.7:
+            return "B (우수)"
+        elif score >= 0.5:
+            return "C (보통)"
+        elif score >= 0.3:
+            return "D (미흡)"
+        else:
+            return "F (부족)"
+    
+    def _identify_insight_strengths(self, insights: Dict[str, Any], quality_score: float) -> List[str]:
+        """인사이트의 강점 식별"""
+        strengths = []
+        
+        if quality_score >= 4.0:
+            strengths.append("상세하고 구체적인 분석")
+        if insights.get("confidence", 0) > 0.7:
+            strengths.append("높은 신뢰도")
+        if len(str(insights.get("security_implications", ""))) > 50:
+            strengths.append("충분한 보안 영향 분석")
+        if "0x" in str(insights) or "gas" in str(insights).lower():
+            strengths.append("기술적 세부사항 포함")
+        
+        return strengths if strengths else ["기본 요구사항 충족"]
+    
+    def _suggest_insight_improvements(self, insights: Dict[str, Any], quality_score: float) -> List[str]:
+        """인사이트 개선 제안"""
+        suggestions = []
+        
+        if quality_score < 2.0:
+            suggestions.append("더 상세하고 구체적인 분석 필요")
+        if len(str(insights.get("security_implications", ""))) < 30:
+            suggestions.append("보안 영향에 대한 더 깊이 있는 분석 필요")
+        if insights.get("confidence", 0.5) == 0.5:
+            suggestions.append("분석 결과에 대한 신뢰도 평가 개선 필요")
+        if "0x" not in str(insights) and "gas" not in str(insights).lower():
+            suggestions.append("기술적 세부사항(주소, 가스, 블록 정보 등) 추가 필요")
+        
+        return suggestions if suggestions else ["현재 품질 수준 유지"]
     
     def analyze_test_results_by_test(self, sid: str, test_name: str, run_id: str, insights: Dict[str, Any]) -> Dict[str, Any]:
         """

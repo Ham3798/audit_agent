@@ -12,7 +12,7 @@ from config.logging_config import get_logger
 from database.manager import init_db
 
 # MCP 도구들
-from mcp_tools import ScenarioMCPTools, TestMCPTools, AnalysisMCPTools, PocMCPTools, SimplifiedMCPTools
+from mcp_tools import ScenarioMCPTools, TestMCPTools, AnalysisMCPTools, PocMCPTools
 
 # 로거 설정
 logger = get_logger("main")
@@ -31,16 +31,12 @@ def register_all_mcp_tools():
     analysis_tools = AnalysisMCPTools()
     poc_tools = PocMCPTools()
     
-    # 새로운 단순화된 도구들
-    simplified_tools = SimplifiedMCPTools()
-    
     scenario_tools.register_tools(mcp)
     test_tools.register_tools(mcp)
     analysis_tools.register_tools(mcp)
     poc_tools.register_tools(mcp)
-    simplified_tools.register_tools(mcp)
     
-    logger.info("모든 MCP 도구들이 등록되었습니다. (단순화된 도구 포함)")
+    logger.info("모든 MCP 도구들이 등록되었습니다.")
 
 def run_server():
     """MCP 서버를 실행합니다."""

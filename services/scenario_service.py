@@ -260,12 +260,65 @@ class ScenarioService:
         Returns:
             Dict[str, Any]: 시나리오 전체 컨텍스트
         """
-        self.logger.info(f"시나리오 컨텍스트 조회: sid={sid}, test_contract={test_contract_name}")
+        self.logger.info(f"시나리오 컨텍스트 조회: sid={sid}, test_contract={test_contract_name}, foundry_root={foundry_root_path}")
         
-        doc = load_scenario(sid)
-        if doc:
-            self.logger.info(f"시나리오 {sid} 발견. 컨텍스트 반환.")
-            return json.loads(doc.to_json())
-        else:
-            self.logger.info(f"시나리오 {sid} 없음. 빈 dict 반환.")
-            return {} 
+        # 1. 시나리오 ID 검증
+        if not sid or not sid.strip():
+            return {
+                "error": "시나리오 ID가 비어있습니다.",
+                "details": "유효한 시나리오 ID를 제공해주세요.",
+                "sid": sid
+            }
+        
+        # 2. Foundry 프로젝트 경로 검증
+        if not foundry_root_path or not foundry_root_path.strip():
+            return {
+                "error": "Foundry 프로젝트 경로가 비어있습니다.",
+                "details": "유효한 Foundry 프로젝트 디렉토리 경로를 제공해주세요.",
+                "foundry_root_path": foundry_root_path
+            }
+        
+        if not os.path.exists(foundry_root_path):
+            return {
+                "error": f"Foundry 프로젝트 디렉토리가 존재하지 않습니다: {foundry_root_path}",
+                "details": "디렉토리 경로를 확인하거나 프로젝트를 초기화해주세요.",
+                "foundry_root_path": foundry_root_path
+            }
+        
+        # foundry.toml 파일 확인 (Foundry 프로젝트인지 검증)
+        foundry_toml_path = os.path.join(foundry_root_path, "foundry.toml")
+        if not os.path.exists(foundry_toml_path):
+            return {
+                "error": f"유효한 Foundry 프로젝트가 아닙니다: {foundry_root_path}",
+                "details": "foundry.toml 파일이 없습니다. 'forge init' 명령으로 프로젝트를 초기화해주세요.",
+                "foundry_root_path": foundry_root_path,
+                "missing_file": foundry_toml_path
+            }
+        
+        # 3. 시나리오 DB 조회
+        try:
+            doc = load_scenario(sid)
+            if not doc:
+                self.logger.warning(f"시나리오 {sid} DB에서 찾을 수 없음")
+                return {
+                    "error": f"시나리오 '{sid}'를 DB에서 찾을 수 없습니다.",
+                    "details": "시나리오가 등록되지 않았습니다. register_scenario 도구를 사용하여 먼저 시나리오를 등록하세요.",
+                    "sid": sid,
+                    "suggestion": "최초 유닛테스트 분석 시에는 먼저 테스트 코드를 직접 검토한 후 register_scenario로 시나리오를 등록해야 합니다."
+                }
+            
+            # 4. 성공 시 컨텍스트 반환
+            context_data = json.loads(doc.to_json())
+            self.logger.info(f"시나리오 {sid} 컨텍스트 조회 성공. 데이터 크기: {len(str(context_data))} 문자")
+            
+            return context_data
+            
+        except Exception as e:
+            error_msg = f"시나리오 컨텍스트 조회 중 데이터베이스 오류: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                "error": error_msg,
+                "details": "DB 연결 또는 데이터 로드 중 오류가 발생했습니다.",
+                "sid": sid,
+                "exception_type": type(e).__name__
+            } 
